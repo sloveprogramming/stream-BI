@@ -7,7 +7,32 @@ from app.api.health import router as health_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # Task 7 在此接入调度器
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    from app.db import make_engine, make_session_factory
+    from app.scheduler import refresh_jobs
+    from app.settings import get_settings
+    from app.sync.puller import make_erp_engine
+
+    settings = get_settings()
+    pg_engine = make_engine(settings.database_url)
+    erp_engine = make_erp_engine(
+        settings.erp_database_url, settings.erp_query_timeout_seconds
+    )
+    session_factory = make_session_factory(pg_engine)
+    app.state.settings = settings
+    app.state.pg_engine = pg_engine
+    app.state.erp_engine = erp_engine
+    app.state.session_factory = session_factory
+
+    scheduler = BackgroundScheduler(timezone="Asia/Hong_Kong")
+    refresh_jobs(scheduler, session_factory)
+    scheduler.start()
+    app.state.scheduler = scheduler
+    yield
+    scheduler.shutdown(wait=False)
+    erp_engine.dispose()
+    pg_engine.dispose()
 
 
 def create_app() -> FastAPI:
