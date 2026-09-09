@@ -64,7 +64,12 @@ def create_app() -> FastAPI:
     from app.api.reports_api import router as reports_router
 
     app.include_router(reports_router, prefix="/api/v1")
+
+    from app.api.web_support import router as web_support_router
+
+    app.include_router(web_support_router, prefix="/api/v1")
     return app
+
 
 
 
