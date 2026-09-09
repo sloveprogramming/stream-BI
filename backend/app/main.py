@@ -53,7 +53,12 @@ def create_app() -> FastAPI:
     from app.api.data_api import router as data_router
 
     app.include_router(data_router, prefix="/api/v1")
+
+    from app.api.export_api import router as export_router
+
+    app.include_router(export_router, prefix="/api/v1")
     return app
+
 
 
 
