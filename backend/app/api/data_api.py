@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.access.scoped_query import build_count_sql, build_scoped_sql
-from app.api.deps import Context, Principal, get_ctx, get_principal
+from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 @router.get("")
 def list_datasets(
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     user = principal.user
@@ -45,7 +45,7 @@ def query_rows(
     request: Request,
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     started = time.perf_counter()
@@ -80,7 +80,7 @@ def query_rows(
         session.add(
             AuditLog(
                 user_id=principal.user.id,
-                api_key_id=principal.api_key.id,
+                api_key_id=getattr(principal.api_key, 'id', None),
                 channel="api",
                 dataset=ds.name,
                 action="query",
@@ -104,3 +104,4 @@ def text_exec(sql: str):
     from sqlalchemy import text
 
     return text(sql)
+

@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.access.scoped_query import build_scoped_sql
-from app.api.deps import Context, Principal, get_ctx, get_principal
+from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
 from app.settings import get_settings
 
 router = APIRouter(prefix="/datasets", tags=["export"])
 
 
-def _grant_for(session, principal: Principal, ds: Dataset) -> DatasetGrant:
+def _grant_for(session, principal: AnyPrincipal, ds: Dataset) -> DatasetGrant:
     if principal.user.role_id is None:
         raise HTTPException(status_code=403, detail="no grant")
     grant = (
@@ -31,7 +31,7 @@ def _grant_for(session, principal: Principal, ds: Dataset) -> DatasetGrant:
 def export_rows(
     name: str,
     format: str = Query("csv", pattern="^(csv|xlsx)$"),
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     from sqlalchemy import text
@@ -77,7 +77,7 @@ def export_rows(
         session.add(
             AuditLog(
                 user_id=principal.user.id,
-                api_key_id=principal.api_key.id,
+                api_key_id=getattr(principal.api_key, 'id', None),
                 channel="export",
                 dataset=ds.name,
                 action="export",
@@ -92,3 +92,4 @@ def export_rows(
             media_type=media,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+

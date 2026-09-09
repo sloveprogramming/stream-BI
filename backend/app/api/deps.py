@@ -75,6 +75,7 @@ def get_web_principal(request: Request, ctx: Context = Depends(get_ctx)) -> WebP
 @dataclass
 class AnyPrincipal:
     user: object
+    api_key: object | None = None
 
 
 def get_any_principal(request: Request, ctx: Context = Depends(get_ctx)) -> AnyPrincipal:
@@ -83,4 +84,5 @@ def get_any_principal(request: Request, ctx: Context = Depends(get_ctx)) -> AnyP
         wp = get_web_principal(request, ctx)
         return AnyPrincipal(user=wp.user)
     p = get_principal(request, ctx)
-    return AnyPrincipal(user=p.user)
+    return AnyPrincipal(user=p.user, api_key=p.api_key)
+
