@@ -46,6 +46,11 @@ def create_app() -> FastAPI:
     from app.api.admin_api import router as admin_router
 
     app.include_router(admin_router, prefix="/api/v1")
+
+    from app.api.data_api import router as data_router
+
+    app.include_router(data_router, prefix="/api/v1")
     return app
+
 
 

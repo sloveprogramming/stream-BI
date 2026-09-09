@@ -1,7 +1,5 @@
 import re
 
-from app.sync.spec import quote_ident  # noqa: F401 保留复用校验语义
-
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _OPS = {
     "eq": "=",
@@ -24,6 +22,30 @@ def _quote(name: str) -> str:
     return '"' + check_ident(name) + '"'
 
 
+def _build_where(dataset, grant, filters: dict) -> tuple[list[str], dict]:
+    params: dict = {}
+    where: list[str] = []
+    for i, rule in enumerate(grant.row_rules or []):
+        field = check_ident(rule["field"])
+        op = _OPS[rule["op"]]
+        params[f"r_{i}"] = rule["value"]
+        where.append(f"{_quote(field)} {op} :r_{i}")
+    for field, value in filters.items():
+        check_ident(field)
+        params[f"f_{field}"] = value
+        where.append(f"{_quote(field)} = :f_{field}")
+    return where, params
+
+
+def build_count_sql(dataset, grant, filters: dict) -> tuple[str, dict]:
+    """与 build_scoped_sql 同口径的 COUNT 语句（用于 total）。"""
+    where, params = _build_where(dataset, grant, filters)
+    sql = f"SELECT COUNT(*) FROM {dataset.source_table}"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return sql, params
+
+
 def build_scoped_sql(
     dataset, grant, filters: dict, limit: int, offset: int
 ) -> tuple[str, dict]:
@@ -37,18 +59,7 @@ def build_scoped_sql(
     for c in dataset.pk_columns:
         check_ident(c)
 
-    params: dict = {}
-    where: list[str] = []
-    for i, rule in enumerate(grant.row_rules or []):
-        field = check_ident(rule["field"])
-        op = _OPS[rule["op"]]
-        params[f"r_{i}"] = rule["value"]
-        where.append(f"{_quote(field)} {op} :r_{i}")
-    for field, value in filters.items():
-        check_ident(field)
-        params[f"f_{field}"] = value
-        where.append(f"{_quote(field)} = :f_{field}")
-
+    where, params = _build_where(dataset, grant, filters)
     col_sql = ", ".join(_quote(c) for c in columns)
     sql = f"SELECT {col_sql} FROM {dataset.source_table}"
     if where:
