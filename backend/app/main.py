@@ -26,7 +26,10 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = session_factory
 
     scheduler = BackgroundScheduler(timezone="Asia/Hong_Kong")
+    from app.reports.scheduler import refresh_report_jobs
+
     refresh_jobs(scheduler, session_factory)
+    refresh_report_jobs(scheduler, session_factory)
     scheduler.start()
     app.state.scheduler = scheduler
     yield
@@ -57,7 +60,12 @@ def create_app() -> FastAPI:
     from app.api.export_api import router as export_router
 
     app.include_router(export_router, prefix="/api/v1")
+
+    from app.api.reports_api import router as reports_router
+
+    app.include_router(reports_router, prefix="/api/v1")
     return app
+
 
 
 

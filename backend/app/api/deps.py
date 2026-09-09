@@ -71,3 +71,16 @@ def get_web_principal(request: Request, ctx: Context = Depends(get_ctx)) -> WebP
         if user is None or not user.enabled:
             raise HTTPException(status_code=403, detail="user disabled")
         return WebPrincipal(user=user)
+
+@dataclass
+class AnyPrincipal:
+    user: object
+
+
+def get_any_principal(request: Request, ctx: Context = Depends(get_ctx)) -> AnyPrincipal:
+    """JWT（Web）与 API Key 双通道统一入口。"""
+    if request.headers.get("Authorization", "").startswith("Bearer "):
+        wp = get_web_principal(request, ctx)
+        return AnyPrincipal(user=wp.user)
+    p = get_principal(request, ctx)
+    return AnyPrincipal(user=p.user)

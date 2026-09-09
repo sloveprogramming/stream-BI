@@ -79,3 +79,28 @@ class AuditLog(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     detail: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+class ReportTask(Base):
+    __tablename__ = "report_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"))
+    format: Mapped[str] = mapped_column(String(8), default="xlsx")  # csv/xlsx
+    cron: Mapped[str] = mapped_column(String(64), default="0 8 * * *")
+    filters: Mapped[dict] = mapped_column(JSON, default=dict)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("report_tasks.id"))
+    file_name: Mapped[str] = mapped_column(String(256))
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="success")  # success/failed
+    error: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
