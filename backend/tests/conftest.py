@@ -18,6 +18,21 @@ def _reachable(url: str) -> bool:
         return False
 
 
+MYSQL_URL = os.environ.get(
+    "BISQL_TEST_MYSQL_URL",
+    __import__("app.settings", fromlist=["get_settings"]).get_settings().erp_database_url,
+)
+
+
+@pytest.fixture(scope="session")
+def mysql_erp_engine():
+    if not _reachable(MYSQL_URL):
+        pytest.skip("ERP MySQL 不可达：先启动本地 MySQL（erp 库）")
+    engine = make_engine(MYSQL_URL)
+    yield engine
+    engine.dispose()
+
+
 pytestmark = pytest.mark.usefixtures()
 
 
@@ -36,3 +51,4 @@ def pg_engine():
 @pytest.fixture(scope="session")
 def pg_session_factory(pg_engine):
     return make_session_factory(pg_engine)
+

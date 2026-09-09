@@ -13,6 +13,13 @@ from app.sync.spec import quote_qualified, spec_from_task
 from app.sync.writer import upsert_rows
 
 
+def _as_naive_utc(value):
+    """把带时区的时间统一转成 naive UTC，便于跨库比较。"""
+    if getattr(value, "tzinfo", None) is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def _row_hash(row: dict) -> str:
     return hashlib.sha1(
         json.dumps(row, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
@@ -40,8 +47,11 @@ def run_sync(
             for batch in iter_rows(erp_engine, spec, task.watermark, batch_size):
                 written += upsert_rows(pg_engine, task.target_table, batch, spec.pk_columns)
                 pulled += len(batch)
-                batch_max = max(b[spec.incremental_field] for b in batch)
-                if new_watermark is None or batch_max > new_watermark:
+                batch_max = _as_naive_utc(
+                    max(b[spec.incremental_field] for b in batch)
+                )
+                current = _as_naive_utc(new_watermark) if new_watermark is not None else None
+                if current is None or batch_max > current:
                     new_watermark = batch_max
         else:
             existing: dict = {}
@@ -77,3 +87,4 @@ def run_sync(
     history.finished_at = datetime.now(timezone.utc)
     session.commit()
     return result
+
