@@ -368,7 +368,7 @@ def test_insert_task_roundtrip(pg_session_factory):
 ```
 
 - [ ] **Step 1: 先写上面测试文件**，运行 `python -m pytest tests/integration/test_models.py -v`；Expected: SKIP（PG 不可达）
-- [ ] **Step 2: 启动 PG**（仓库根）`docker compose up -d postgres`（compose 文件在 Task 9，此处可先手写仅含 postgres 的最小 compose 或 `docker run -d --name bisql-pg -e POSTGRES_USER=bisql -e POSTGRES_PASSWORD=bisql -e POSTGRES_DB=bisql -p 55432:5432 postgres:16`）；Expected: 容器 healthy
+- [ ] **Step 2: 启动 PG** — 本机已配置原生 PostgreSQL 16.15（`localhost:55432`，用户/密码/库均为 `bisql`），直接使用即可；换机器时可用 `docker compose up -d postgres` 或 `docker run -d --name bisql-pg -e POSTGRES_USER=bisql -e POSTGRES_PASSWORD=bisql -e POSTGRES_DB=bisql -p 55432:5432 postgres:16`；Expected: 可连接（`psql -h localhost -p 55432 -U bisql -d bisql -c "select 1"`）
 - [ ] **Step 3: 安装 alembic 并初始化** — Run: `alembic init alembic`（在 backend/ 下）；编辑 `alembic/env.py`：
 
 ```python
@@ -406,6 +406,7 @@ git commit -m "feat: 元数据模型、数据库层与 alembic 迁移"
   - `SyncSpec(source_table: str, columns: list[str], pk_columns: list[str], incremental_field: str | None)`（frozen dataclass）
   - `spec_from_task(task: SyncTask) -> SyncSpec`
   - `quote_ident(name: str) -> str`（校验失败抛 ValueError）
+  - `quote_qualified(name: str) -> str`（`schema.table` 逐段校验并拼接，单段等价 quote_ident）
   - `make_erp_engine(url: str, query_timeout: int) -> Engine`
   - `iter_rows(erp_engine, spec, watermark, batch_size) -> Iterator[list[dict]]`（每批是 `dict[列名, 值]` 列表，按主键有序）
 
@@ -422,6 +423,13 @@ def quote_ident(name: str) -> str:
     if not _IDENT_RE.match(name):
         raise ValueError(f"非法标识符: {name!r}")
     return name
+
+
+def quote_qualified(name: str) -> str:
+    parts = name.split(".")
+    if len(parts) == 2:
+        return f"{quote_ident(parts[0])}.{quote_ident(parts[1])}"
+    return quote_ident(name)
 
 
 @dataclass(frozen=True)
@@ -457,7 +465,6 @@ def make_erp_engine(url: str, query_timeout: int) -> Engine:
 
     return create_engine(
         url,
-        pool_pre_pool_ping=False,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 10, "read_timeout": query_timeout},
     )
@@ -516,7 +523,13 @@ def test_quote_ident_rejects_injection():
 def test_build_select_sql_with_watermark():
     from datetime import datetime
 
-    sql, params = build_select_sql(SPEC, datetime(2026, 9, 1))
+    spec = SyncSpec(
+        source_table="sales_order",
+        columns=["id", "region", "amount", "update_time"],
+        pk_columns=["id"],
+        incremental_field="update_time",
+    )
+    sql, params = build_select_sql(spec, datetime(2026, 9, 1))
     assert "WHERE update_time > :watermark" in sql
     assert "ORDER BY id" in sql
     assert params["watermark"] == datetime(2026, 9, 1)
@@ -555,10 +568,10 @@ git commit -m "feat: ERP 只读拉取层与标识符校验"
 **Interfaces:**
 - Consumes: Task 2 的 `SyncTask/SyncHistory`、`make_session_factory`；Task 3 的 `SyncSpec/iter_rows`
 - Produces:
-  - `ensure_ods_table(pg_engine, spec, target_table) -> None`（不存在则按 ERP 列类型建表）
+  - `ensure_ods_table(erp_engine, pg_engine, spec, target_table) -> None`（不存在则按 ERP 列类型建表）
   - `mysql_type_to_pg(mysql_type: str) -> str`
   - `upsert_rows(pg_engine, target_table, rows: list[dict], pk_columns: list[str]) -> int`（返回写入行数）
-  - `run_sync(session, erp_engine, pg_engine, task, trigger: str) -> dict`（返回 `{"status","rows_pulled","rows_written","error"}`，内部写 SyncHistory 并推进 watermark）
+  - `run_sync(session, erp_engine, pg_engine, task, trigger: str, batch_size: int = 5000) -> dict`（返回 `{"status","rows_pulled","rows_written","error"}`，内部写 SyncHistory 并推进 watermark）
 
 `backend/app/sync/ods.py`：
 
@@ -671,7 +684,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.sync.spec import quote_ident
+from app.sync.spec import quote_ident, quote_qualified
 
 
 def upsert_rows(pg_engine: Engine, target_table: str, rows: list[dict], pk_columns: list[str]) -> int:
@@ -689,7 +702,7 @@ def upsert_rows(pg_engine: Engine, target_table: str, rows: list[dict], pk_colum
     else:
         conflict = f"ON CONFLICT ({pk_sql}) DO NOTHING"
     sql = text(
-        f"INSERT INTO {target_table} ({col_sql}) VALUES (:{', :'.join(all_cols)}) "
+        f"INSERT INTO {quote_qualified(target_table)} ({col_sql}) VALUES (:{', :'.join(all_cols)}) "
         f"{conflict}"
     )
     params = [{**row, "_synced_at": datetime.now(timezone.utc)} for row in rows]
@@ -712,7 +725,7 @@ from sqlalchemy.orm import Session
 from app.models import SyncHistory
 from app.sync.ods import ensure_ods_table
 from app.sync.puller import iter_rows
-from app.sync.spec import spec_from_task
+from app.sync.spec import quote_qualified, spec_from_task
 from app.sync.writer import upsert_rows
 
 
@@ -722,7 +735,14 @@ def _row_hash(row: dict) -> str:
     ).hexdigest()
 
 
-def run_sync(session: Session, erp_engine: Engine, pg_engine: Engine, task, trigger: str) -> dict:
+def run_sync(
+    session: Session,
+    erp_engine: Engine,
+    pg_engine: Engine,
+    task,
+    trigger: str,
+    batch_size: int = 5000,
+) -> dict:
     spec = spec_from_task(task)
     history = SyncHistory(task_id=task.id, trigger=trigger, status="failed")
     session.add(history)
@@ -733,7 +753,7 @@ def run_sync(session: Session, erp_engine: Engine, pg_engine: Engine, task, trig
         pulled = written = 0
         new_watermark = task.watermark
         if spec.incremental_field is not None:
-            for batch in iter_rows(erp_engine, spec, task.watermark, 5000):
+            for batch in iter_rows(erp_engine, spec, task.watermark, batch_size):
                 written += upsert_rows(pg_engine, task.target_table, batch, spec.pk_columns)
                 pulled += len(batch)
                 batch_max = max(b[spec.incremental_field] for b in batch)
@@ -742,12 +762,12 @@ def run_sync(session: Session, erp_engine: Engine, pg_engine: Engine, task, trig
         else:
             existing: dict = {}
             with pg_engine.connect() as conn:
-                for row in conn.execute(text(f"SELECT * FROM {task.target_table}")):
+                for row in conn.execute(text(f"SELECT * FROM {quote_qualified(task.target_table)}")):
                     d = dict(row._mapping)
                     d.pop("_synced_at", None)
                     key = tuple(d[c] for c in spec.pk_columns)
                     existing[key] = _row_hash(d)
-            for batch in iter_rows(erp_engine, spec, None, 5000):
+            for batch in iter_rows(erp_engine, spec, None, batch_size):
                 to_write = []
                 for row in batch:
                     key = tuple(row[c] for c in spec.pk_columns)
@@ -1057,7 +1077,14 @@ def execute_task(task_id: int, trigger: str) -> None:
                 return
             try:
                 run_with_retry(
-                    lambda: run_sync(session, erp_engine, pg_engine, task, trigger),
+                    lambda: run_sync(
+                        session,
+                        erp_engine,
+                        pg_engine,
+                        task,
+                        trigger,
+                        batch_size=settings.sync_batch_size,
+                    ),
                     attempts=settings.sync_retry_attempts,
                     base_delay=settings.sync_retry_base_delay,
                 )
@@ -1144,8 +1171,10 @@ def create_app() -> FastAPI:
 ```python
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from app.db import make_engine, make_session_factory
 from app.models import SyncTask
 from app.scheduler import execute_task, refresh_jobs
+from tests.conftest import PG_URL
 
 
 def _task(name, enabled, cron="0 8 * * *"):
@@ -1186,14 +1215,33 @@ def test_execute_task_disabled_is_noop(pg_session_factory, monkeypatch):
         s.add(t)
         s.commit()
         tid = t.id
+
+    class DummyEngine:
+        def dispose(self):
+            pass
+
+    class FakeSettings:
+        sync_retry_attempts = 1
+        sync_retry_base_delay = 0.0
+        sync_batch_size = 5000
+        alert_webhook_url = ""
+
+    local_pg = make_engine(PG_URL)
+    local_sf = make_session_factory(local_pg)
+    monkeypatch.setattr(
+        "app.scheduler.job_context",
+        lambda: (local_sf, DummyEngine(), local_pg, FakeSettings()),
+    )
+
+    def fail_run_sync(*args, **kwargs):
+        raise AssertionError("停用任务不应执行同步")
+
+    monkeypatch.setattr("app.scheduler.run_sync", fail_run_sync)
+    execute_task(tid, "manual")  # 不抛异常即通过
+
+    with pg_session_factory() as s:
         s.query(SyncTask).filter_by(id=tid).delete(synchronize_session=False)
         s.commit()
-
-    def fail_job_context():
-        raise AssertionError("停用任务不应构造引擎")
-
-    monkeypatch.setattr("app.scheduler.job_context", fail_job_context)
-    execute_task(tid, "manual")  # 不抛异常即通过
 ```
 
 - [ ] **Step 1: 写失败测试** → `python -m pytest tests/unit/test_scheduler.py -v`；Expected: FAIL
@@ -1289,7 +1337,14 @@ def run_task(task_id: int, ctx: Context = Depends(get_ctx)):
             raise HTTPException(status_code=404, detail="task not found")
         try:
             result = run_with_retry(
-                lambda: run_sync(session, ctx.erp_engine, ctx.pg_engine, task, trigger="manual"),
+                lambda: run_sync(
+                    session,
+                    ctx.erp_engine,
+                    ctx.pg_engine,
+                    task,
+                    trigger="manual",
+                    batch_size=ctx.settings.sync_batch_size,
+                ),
                 attempts=ctx.settings.sync_retry_attempts,
                 base_delay=ctx.settings.sync_retry_base_delay,
             )
@@ -1360,6 +1415,7 @@ from app.models import SyncHistory, SyncTask
 class FakeSettings:
     sync_retry_attempts = 1
     sync_retry_base_delay = 0.0
+    sync_batch_size = 5000
     alert_webhook_url = ""
 
 
@@ -1487,6 +1543,8 @@ volumes:
   bisql_mysql_data:
 ```
 
+> 注：`ops/mysql-init` 只在 MySQL 数据卷首次创建时执行；若卷已存在，先 `docker compose down -v` 再 `up -d` 重新初始化演示表。
+
 `ops/mysql-init/01-demo.sql`：
 
 ```sql
@@ -1528,7 +1586,7 @@ BISQL_ALERT_WEBHOOK_URL=
 
 ## 本地开发
 
-1. `docker compose up -d`（PG 55432 / ERP MySQL 53306）
+1. 启动依赖（二选一）：本机原生 PostgreSQL 16（`localhost:55432`，默认连接串已指向它）；或 `docker compose up -d`（PG 55432 / ERP MySQL 53306）
 2. `cd backend && python -m pip install -e ".[dev]"`
 3. `copy .env.example .env`（按需改连接串）
 4. `alembic upgrade head`
@@ -1592,14 +1650,6 @@ from tests.conftest import PG_URL
 
 @pytest.fixture(scope="module")
 def erp_mysql(mysql_erp_engine):
-    with mysql_erp_engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                "INSERT INTO sales_order (id, region, amount, update_time) "
-                "VALUES (101, '华东', 999.99, '2026-09-09 12:00:00') "
-                "ON DUPLICATE KEY UPDATE amount = VALUES(amount)"
-            )
-        )
     return mysql_erp_engine
 
 
@@ -1641,6 +1691,15 @@ def test_e2e_incremental_watermark_and_retry_alert(
 ):
     with pg_engine.begin() as conn:
         conn.execute(sa.text("DROP TABLE IF EXISTS ods.sales_order_e2e"))
+
+    with erp_mysql.begin() as conn:
+        conn.execute(sa.text("DELETE FROM sales_order WHERE id NOT IN (1, 2, 3)"))
+        conn.execute(
+            sa.text(
+                "INSERT INTO sales_order (id, region, amount, update_time) "
+                "VALUES (101, '华东', 999.99, '2026-09-09 12:00:00')"
+            )
+        )
 
     with pg_session_factory() as session:
         task = _make_task(session)
@@ -1699,6 +1758,7 @@ def test_e2e_incremental_watermark_and_retry_alert(
         class FakeSettings:
             sync_retry_attempts = 2
             sync_retry_base_delay = 0.0
+            sync_batch_size = 5000
             alert_webhook_url = "http://hook.local/x"
 
         local_pg = make_engine(PG_URL)
