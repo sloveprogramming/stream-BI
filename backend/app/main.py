@@ -37,7 +37,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="BIsql 数据分发中台", lifespan=lifespan)
+    from app.api.auth_api import router as auth_router
+
     app.include_router(health_router, prefix="/api/v1")
+    app.include_router(auth_router, prefix="/api/v1")
 
     from app.api.sync_api import router as sync_router
 
@@ -51,6 +54,7 @@ def create_app() -> FastAPI:
 
     app.include_router(data_router, prefix="/api/v1")
     return app
+
 
 
 

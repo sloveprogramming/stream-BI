@@ -49,3 +49,25 @@ def get_principal(request: Request, ctx: Context = Depends(get_ctx)) -> Principa
         except RateLimitExceeded as exc:
             raise HTTPException(status_code=429, detail=str(exc))
         return Principal(user=user, api_key=api_key)
+
+@dataclass
+class WebPrincipal:
+    user: object
+
+
+def get_web_principal(request: Request, ctx: Context = Depends(get_ctx)) -> WebPrincipal:
+    from app.models import User
+    from app.security.jwts import decode_token
+
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing token")
+    try:
+        payload = decode_token(auth.removeprefix("Bearer "))
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid token")
+    with ctx.session_factory() as session:
+        user = session.get(User, int(payload["sub"]))
+        if user is None or not user.enabled:
+            raise HTTPException(status_code=403, detail="user disabled")
+        return WebPrincipal(user=user)

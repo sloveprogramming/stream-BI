@@ -15,9 +15,13 @@ class Settings(BaseSettings):
     alert_webhook_url: str = ""
     rate_limit_per_minute: int = 120
     rate_limit_per_day: int = 10000
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_expire_hours: int = 12
+    export_max_rows: int = 50000
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
 
