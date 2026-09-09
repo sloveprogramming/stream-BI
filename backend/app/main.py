@@ -68,11 +68,27 @@ def create_app() -> FastAPI:
     from app.api.web_support import router as web_support_router
 
     app.include_router(web_support_router, prefix="/api/v1")
+
+    # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
+    from pathlib import Path
+
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if frontend_dist.exists():
+        from fastapi.responses import FileResponse
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str):
+            file = frontend_dist / full_path
+            if full_path and file.is_file():
+                return FileResponse(file)
+            return FileResponse(frontend_dist / "index.html")
     return app
 
 
-
-
-
+# uvicorn 入口：app.main:app
+app = create_app()
 
 
