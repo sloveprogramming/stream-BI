@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS sales_order (
+  id INT PRIMARY KEY,
+  region VARCHAR(50) NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  update_time DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO sales_order VALUES
+  (1, '??', 100.50, '2026-09-08 08:00:00'),
+  (2, '??', 200.00, '2026-09-08 09:00:00'),
+  (3, '??', 300.25, '2026-09-09 10:00:00');

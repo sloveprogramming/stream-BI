@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: bisql-pg
+    environment:
+      POSTGRES_USER: bisql
+      POSTGRES_PASSWORD: bisql
+      POSTGRES_DB: bisql
+    ports:
+      - "55432:5432"
+    volumes:
+      - bisql_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bisql"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mysql-erp:
+    image: mysql:8
+    container_name: bisql-mysql-erp
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: erp
+    ports:
+      - "53306:3306"
+    volumes:
+      - bisql_mysql_data:/var/lib/mysql
+      - ./ops/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  bisql_pgdata:
+  bisql_mysql_data:
