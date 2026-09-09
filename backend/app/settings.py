@@ -1,0 +1,20 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="BISQL_", extra="ignore")
+
+    database_url: str = "postgresql+psycopg://bisql:bisql@localhost:55432/bisql"
+    erp_database_url: str = "mysql+pymysql://root:root@localhost:53306/erp?charset=utf8mb4"
+    erp_query_timeout_seconds: int = 30
+    sync_batch_size: int = 5000
+    sync_retry_attempts: int = 3
+    sync_retry_base_delay: float = 5.0
+    alert_webhook_url: str = ""
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
