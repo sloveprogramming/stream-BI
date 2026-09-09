@@ -32,7 +32,12 @@ async def lifespan(app: FastAPI):
     refresh_report_jobs(scheduler, session_factory)
     scheduler.start()
     app.state.scheduler = scheduler
-    yield
+
+    from contextlib import asynccontextmanager as _acm  # noqa
+    from app.mcp_server import mcp_app as _mcp
+
+    async with _mcp.session_manager.run():
+        yield
     scheduler.shutdown(wait=False)
     erp_engine.dispose()
     pg_engine.dispose()
@@ -85,10 +90,23 @@ def create_app() -> FastAPI:
             if full_path and file.is_file():
                 return FileResponse(file)
             return FileResponse(frontend_dist / "index.html")
+
+    # MCP streamable-HTTP（挂载在 /，内部路由 /mcp；无状态 POST 请求绕过 GET-only catch-all）
+    from app.mcp_auth import MCPAuthMiddleware
+    from app.mcp_server import mcp_app
+
+    app.add_middleware(MCPAuthMiddleware)
+    app.mount("/", mcp_app.streamable_http_app())
     return app
 
 
 # uvicorn 入口：app.main:app
 app = create_app()
+
+
+
+
+
+
 
 
