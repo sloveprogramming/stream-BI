@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Checkbox, Divider, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Card, Checkbox, Divider, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Typography, message } from 'antd'
 import http from '../../api/http'
 
 const OPS = ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like']
@@ -23,6 +23,10 @@ export default function DatasetsAdmin() {
   const [roleOpen, setRoleOpen] = useState(false)
   const [roleName, setRoleName] = useState('')
   const [roleDesc, setRoleDesc] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
 
   const load = () => {
     http.get('/admin/datasets').then((r) => setDatasets(r.data))
@@ -94,6 +98,27 @@ export default function DatasetsAdmin() {
     }
   }
 
+  const openEdit = (ds: any) => {
+    setEditTarget(ds)
+    setEditTitle(ds.title || '')
+    setEditDesc(ds.description || '')
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    try {
+      await http.patch(`/admin/datasets/${editTarget.id}`, {
+        title: editTitle || null,
+        description: editDesc || null,
+      })
+      message.success('已保存')
+      setEditOpen(false)
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '保存失败')
+    }
+  }
+
   return (
     <Card
       title="数据集与授权"
@@ -108,19 +133,52 @@ export default function DatasetsAdmin() {
         rowKey="id"
         dataSource={datasets}
         columns={[
-          { title: '名称', dataIndex: 'name' },
+          {
+            title: '名称',
+            render: (_, r) => (
+              <span>
+                {r.title || r.name}
+                {r.title && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {' '}
+                    ({r.name})
+                  </Typography.Text>
+                )}
+              </span>
+            ),
+          },
           { title: '源表', dataIndex: 'source_table' },
           { title: '字段', dataIndex: 'columns', render: (c) => c?.join('、') },
           {
             title: '操作',
             render: (_, r) => (
-              <Button size="small" onClick={() => openGrant(r)}>
-                管理授权
-              </Button>
+              <Space>
+                <Button size="small" onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+                <Button size="small" onClick={() => openGrant(r)}>
+                  管理授权
+                </Button>
+              </Space>
             ),
           },
         ]}
       />
+      <Modal
+        open={editOpen}
+        title="编辑数据集"
+        onOk={saveEdit}
+        onCancel={() => setEditOpen(false)}
+      >
+        <Form layout="vertical">
+          <Form.Item label="显示名称（中文标题）">
+            <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+          </Form.Item>
+          <Form.Item label="描述">
+            <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+          </Form.Item>
+        </Form>
+      </Modal>
       <Modal
         open={roleOpen}
         title="新建角色"

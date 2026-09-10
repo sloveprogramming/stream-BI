@@ -21,7 +21,12 @@ export default function Datasets() {
       )}
       {items.map((d) => (
         <Col span={8} key={d.id}>
-          <Card title={d.name} hoverable>
+          <Card title={d.title || d.name} hoverable>
+            {d.title && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                标识：{d.name}
+              </Typography.Text>
+            )}
             <Typography.Paragraph type="secondary">{d.description || '（无描述）'}</Typography.Paragraph>
             <Typography.Text>可用字段：{d.columns?.join('、')}</Typography.Text>
             <div style={{ marginTop: 12 }}>

@@ -35,6 +35,7 @@ def list_datasets(
             {
                 "id": d.id,
                 "name": d.name,
+                "title": d.title,
                 "description": d.description,
                 "columns": d.columns,
             }

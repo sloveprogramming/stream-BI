@@ -5,6 +5,7 @@ import http from '../api/http'
 
 export default function DatasetQuery() {
   const { name } = useParams()
+  const [title, setTitle] = useState<string>('')
   const [columns, setColumns] = useState<string[]>([])
   const [rows, setRows] = useState<any[]>([])
   const [total, setTotal] = useState(0)
@@ -22,6 +23,10 @@ export default function DatasetQuery() {
 
   useEffect(() => {
     load().catch((e) => message.error(e.response?.data?.detail || '查询失败'))
+    http.get('/datasets').then((r) => {
+      const ds = r.data.find((d: any) => d.name === name)
+      setTitle(ds?.title || name || '')
+    })
   }, [load])
 
   const tableColumns = [
@@ -62,7 +67,7 @@ export default function DatasetQuery() {
 
   return (
     <Card
-      title={`数据集：${name}`}
+      title={`数据集：${title || name}`}
       extra={
         <Button.Group>
           <Button onClick={() => doExport('xlsx')}>导出 Excel</Button>

@@ -36,6 +36,7 @@ class Dataset(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
+    title: Mapped[str | None] = mapped_column(String(128))
     source_table: Mapped[str] = mapped_column(String(128))
     pk_columns: Mapped[list] = mapped_column(JSON)
     columns: Mapped[list] = mapped_column(JSON)

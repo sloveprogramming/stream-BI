@@ -116,6 +116,7 @@ def list_datasets_admin(
         return [
             {
                 "id": d.id, "name": d.name, "source_table": d.source_table,
+                "title": d.title,
                 "pk_columns": d.pk_columns, "columns": d.columns,
                 "description": d.description, "enabled": d.enabled,
             }

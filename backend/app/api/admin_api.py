@@ -91,6 +91,7 @@ def create_dataset(
             raise HTTPException(status_code=400, detail="源表不存在")
         ds = Dataset(
             name=body["name"],
+            title=body.get("title"),
             source_table=source_table,
             pk_columns=body["pk_columns"],
             columns=body["columns"],
@@ -99,6 +100,26 @@ def create_dataset(
         session.add(ds)
         session.commit()
         return {"id": ds.id, "name": ds.name}
+
+
+@router.patch("/datasets/{dataset_id}")
+def update_dataset(
+    dataset_id: int,
+    body: dict,
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    _require_admin(principal)
+    with ctx.session_factory() as session:
+        ds = session.get(Dataset, dataset_id)
+        if ds is None:
+            raise HTTPException(status_code=404, detail="dataset not found")
+        if "title" in body:
+            ds.title = body["title"] or None
+        if "description" in body:
+            ds.description = body["description"] or None
+        session.commit()
+        return {"id": ds.id, "title": ds.title, "description": ds.description}
 
 
 @router.post("/grants", status_code=201)
