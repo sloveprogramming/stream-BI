@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-me"
     jwt_expire_hours: int = 12
     export_max_rows: int = 50000
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_timeout_seconds: int = 60
+    assistant_max_rows: int = 1000
 
 
 @lru_cache
