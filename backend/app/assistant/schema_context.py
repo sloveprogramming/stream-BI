@@ -24,8 +24,10 @@ def build_schema_context(session_factory, pg_engine, user) -> dict:
             tables.append(
                 {
                     "name": ds.name,
+                    "title": ds.title,
                     "source_table": ds.source_table,
                     "columns": columns,
+                    "pk_columns": list(ds.pk_columns or []),
                     "samples": _sample_rows(pg_engine, ds.source_table, columns),
                     "row_rules": grant.row_rules or [],
                 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, Button, Card, Col, Collapse, Empty, Input, List, Popconfirm, Row, Space, Spin,
-  Table, Tag, Tooltip, Typography, message,
+  Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
   CopyOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, RobotOutlined,
@@ -18,6 +18,72 @@ type Msg = {
   rowCount?: number
   error?: string
   loading?: boolean
+  api?: any
+}
+
+const API_KEY_PLACEHOLDER = '<key_id>.<secret>'
+
+/** 用当前站点域名 + 反解出的参数，拼出可直接复制的调用示例。 */
+function buildSnippets(api: any): Record<string, string> {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const qs = new URLSearchParams(api.params || {}).toString()
+  const url = `${origin}${api.endpoint}${qs ? `?${qs}` : ''}`
+  return {
+    curl: `curl -s "${url}" \\\n  -H "X-API-Key: ${API_KEY_PLACEHOLDER}"`,
+    python: `import httpx
+
+resp = httpx.get(
+    "${url}",
+    headers={"X-API-Key": "${API_KEY_PLACEHOLDER}"},
+)
+resp.raise_for_status()
+data = resp.json()  # {dataset, columns, rows, total}
+print(data["total"], data["rows"][:1])`,
+    javascript: `const resp = await fetch("${url}", {
+  headers: { "X-API-Key": "${API_KEY_PLACEHOLDER}" },
+});
+const data = await resp.json(); // {dataset, columns, rows, total}
+console.log(data.total, data.rows.slice(0, 1));`,
+    mcp: `${JSON.stringify(api.mcp, null, 2)}
+
+// 端点：${origin}/mcp   请求头：X-API-Key: ${API_KEY_PLACEHOLDER}`,
+  }
+}
+
+function CodeBlock({ code }: { code: string }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <Button
+        size="small"
+        icon={<CopyOutlined />}
+        style={{ position: 'absolute', top: 6, right: 6, zIndex: 1 }}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(code)
+            message.success('已复制')
+          } catch {
+            message.error('复制失败，请手动选择文本')
+          }
+        }}
+      >
+        复制
+      </Button>
+      <pre
+        style={{
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          margin: 0,
+          fontSize: 12,
+          background: '#f6f6f6',
+          padding: 12,
+          paddingTop: 34,
+          borderRadius: 6,
+        }}
+      >
+        {code}
+      </pre>
+    </div>
+  )
 }
 
 type Session = {
@@ -244,6 +310,7 @@ export default function DataAssistant() {
             loading: false,
           }))
         else if (ev.type === 'error') patchLast((m) => ({ ...m, error: ev.message, loading: false }))
+        else if (ev.type === 'api') patchLast((m) => ({ ...m, api: ev.api }))
         else if (ev.type === 'done') patchLast((m) => ({ ...m, loading: false }))
         scrollToBottom()
       }
@@ -430,6 +497,65 @@ export default function DataAssistant() {
                               导出 CSV（{m.rowCount ?? m.rows.length} 行）
                             </Button>
                           </>
+                        )}
+                        {m.api && m.api.callable && (
+                          <Collapse
+                            size="small"
+                            style={{ marginTop: 8 }}
+                            items={[
+                              {
+                                key: 'api',
+                                label: '生成接口（可直接调用）',
+                                children: (
+                                  <>
+                                    <Space size={6} wrap style={{ marginBottom: 8 }}>
+                                      <Tag color="green">GET</Tag>
+                                      <Typography.Text code style={{ fontSize: 12 }}>
+                                        {m.api.endpoint}?
+                                        {new URLSearchParams(m.api.params || {}).toString()}
+                                      </Typography.Text>
+                                    </Space>
+                                    <Tabs
+                                      size="small"
+                                      items={Object.entries(buildSnippets(m.api)).map(
+                                        ([key, code]) => ({
+                                          key,
+                                          label:
+                                            {
+                                              curl: 'cURL',
+                                              python: 'Python',
+                                              javascript: 'JavaScript',
+                                              mcp: 'MCP',
+                                            }[key] || key,
+                                          children: <CodeBlock code={code} />,
+                                        }),
+                                      )}
+                                    />
+                                    {m.api.caveats?.length > 0 && (
+                                      <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                                        {m.api.caveats.map((c: string, i: number) => (
+                                          <li key={i}>
+                                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                              {c}
+                                            </Typography.Text>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </>
+                                ),
+                              },
+                            ]}
+                          />
+                        )}
+                        {m.api && !m.api.callable && (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12, display: 'block', marginTop: 8 }}
+                          >
+                            本次查询{m.api.reason}，无法直接转成单一数据集接口；可改用 MCP 拆解，
+                            或把问题改成「单表 + 等值筛选」的形式。
+                          </Typography.Text>
                         )}
                       </>
                     )}

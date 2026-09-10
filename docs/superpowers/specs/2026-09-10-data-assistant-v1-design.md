@@ -114,3 +114,7 @@ BISQL_ASSISTANT_MAX_ROWS=1000
 - **会话 ID 与聊天记录**：前端 `DataAssistant.tsx` 支持多会话（新建/切换/删除），会话与消息持久化在浏览器 localStorage（`assistant_sessions_v1`），标题取首个提问；卡片标题展示可复制的前 8 位会话 ID。请求体新增 `session_id`，后端写入 `audit_logs`（`channel="assistant"`，`detail` 含 `session_id/question/sql/error`），可按会话追溯问答。持久化时每会话最多保留 20 行结果，避免超出 localStorage 配额。
 - **数据集准实时可见**：`app/sync/discovery.py` 定时（默认 10s）扫描 `ods` 模式，把 ERP 同步新建的表自动注册为数据集；前端数据集列表与详情页按 5s 轮询刷新，新数据集会在列表打「新」角标。配置见 `BISQL_DISCOVERY_*`。
 - **可见性**：自动发现的数据集默认**仅管理员可见**（管理员无授权即可查询，走 `AdminGrant`），普通用户仍需管理员在「数据集与授权」页显式授权。
+- **生成接口调用方案**：`app/assistant/api_recipe.py` 把生成的 SQL 反解成可直接调用的接口方案，随 `{"type":"api"}` SSE 事件返回，前端以「生成接口（可直接调用）」折叠面板展示 cURL / Python / JavaScript / MCP 四种示例（一键复制）+ 注意事项。
+  - 只对**能一一对应**的查询给方案：单表、无 JOIN/子查询/UNION/GROUP BY/聚合/DISTINCT，且 WHERE 全部为等值 AND 条件；此时等价于 `GET /api/v1/datasets/{name}/rows?字段=值&limit=&offset=`（等价于 MCP `query_dataset`）。
+  - 其余情况返回 `callable=false` + 中文原因（如多表联查、聚合统计、TopN 排序截断、范围/模糊筛选），避免给出与本次结果不一致的调用方式。
+  - 边界处理：无 LIMIT 时按接口上限 500 收敛并提示分页；LIMIT 超上限则收敛并提示；按非主键字段 ORDER BY + LIMIT（TopN）判定不可对应；ORDER BY 非主键但无 LIMIT 时保留并提示顺序差异。

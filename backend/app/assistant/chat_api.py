@@ -76,6 +76,9 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
                 }
             ]
         )
+        recipe = _api_recipe(sql, schema["tables"])
+        if recipe is not None:
+            yield from _sse([{"type": "api", "api": recipe}])
     except SqlGuardError as exc:
         error = str(exc)
         yield from _sse([{"type": "error", "message": error}])
@@ -112,6 +115,16 @@ def _audit(ctx, principal, session_id, question, sql, row_count, started, error)
             session.commit()
     except Exception:  # noqa: BLE001 —— 审计失败不影响回答
         pass
+
+
+def _api_recipe(sql: str, tables: list):
+    """把生成的 SQL 反解成可直接调用的接口方案；失败不影响回答。"""
+    from app.assistant.api_recipe import build_api_recipe
+
+    try:
+        return build_api_recipe(sql, tables)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _execute(ctx: Context, sql: str, params: dict):

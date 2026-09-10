@@ -139,6 +139,33 @@ def test_chat_scoped_select(env, monkeypatch):
     assert result["row_count"] == 2  # 行级规则：只看华东
     assert result["columns"] == ["id", "amount"]
 
+    # 单表等值查询应额外给出可直接调用的接口方案
+    api = next(e for e in events if e["type"] == "api")["api"]
+    assert api["callable"] is True
+    assert api["dataset"] == env["ds_name"]
+    assert api["endpoint"] == f"/api/v1/datasets/{env['ds_name']}/rows"
+    assert api["mcp"]["arguments"]["name"] == env["ds_name"]
+
+
+def test_chat_extracts_equality_filter_as_params(env, monkeypatch):
+    monkeypatch.setattr(
+        "app.assistant.chat_api.generate_sql",
+        lambda sys_prompt, usr_prompt: (
+            "SELECT a.id FROM ods.asst_order a "
+            "WHERE a.region = '华东'"
+        ),
+    )
+    r = env["api_client"].post(
+        "/api/v1/assistant/chat",
+        headers=env["user_headers"],
+        json={"question": "华东订单"},
+    )
+    events = _parse_sse(r.text)
+    api = next(e for e in events if e["type"] == "api")["api"]
+    assert api["callable"] is True
+    assert api["filters"] == {"region": "华东"}
+    assert api["params"]["region"] == "华东"
+
 
 def test_chat_rejects_hidden_column(env, monkeypatch):
     monkeypatch.setattr(
