@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Checkbox, Divider, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Checkbox, Divider, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
 import http from '../../api/http'
 
 const OPS = ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like']
 const OP_LABEL: Record<string, string> = {
   eq: '等于', ne: '不等于', gt: '大于', ge: '大于等于', lt: '小于', le: '小于等于', like: '包含',
 }
+const FIELD_PREVIEW = 2
 
 export default function DatasetsAdmin() {
   const [datasets, setDatasets] = useState<any[]>([])
@@ -27,6 +28,8 @@ export default function DatasetsAdmin() {
   const [editTarget, setEditTarget] = useState<any>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
+  const [limitFields, setLimitFields] = useState(false)
+  const [fieldSearch, setFieldSearch] = useState('')
 
   const load = () => {
     http.get('/admin/datasets').then((r) => setDatasets(r.data))
@@ -56,7 +59,9 @@ export default function DatasetsAdmin() {
 
   const openGrant = (ds: any) => {
     setGrantTarget(ds)
-    setWhitelist(ds.columns)
+    setWhitelist([])
+    setLimitFields(false)
+    setFieldSearch('')
     setRules([])
     setTargetType('role')
     setTargetId(undefined)
@@ -69,18 +74,24 @@ export default function DatasetsAdmin() {
       message.warning('请先选择授权对象')
       return
     }
+    if (limitFields && whitelist.length === 0) {
+      message.warning('已开启「限制可见字段」，请至少勾选一个字段')
+      return
+    }
     try {
       const payload: any = {
         dataset_id: grantTarget.id,
         row_rules: rules.filter((r) => r.field && r.value !== undefined),
-        field_whitelist: whitelist.length ? whitelist : null,
+        field_whitelist: limitFields && whitelist.length ? whitelist : null,
       }
       if (targetType === 'role') payload.role_id = targetId
       else payload.user_id = targetId
       await http.post('/admin/grants', payload)
       message.success('授权已保存')
       http.get('/admin/grants', { params: { dataset_id: grantTarget.id } }).then((r) => setGrantsList(r.data))
-      setWhitelist(grantTarget.columns)
+      setWhitelist([])
+      setLimitFields(false)
+      setFieldSearch('')
       setRules([])
       setTargetId(undefined)
     } catch (e: any) {
@@ -119,6 +130,12 @@ export default function DatasetsAdmin() {
     }
   }
 
+  const allFields: string[] = grantTarget?.columns || []
+  const keyword = fieldSearch.trim().toLowerCase()
+  const shownFields = keyword
+    ? allFields.filter((c) => c.toLowerCase().includes(keyword))
+    : allFields
+
   return (
     <Card
       title="数据集与授权"
@@ -148,7 +165,29 @@ export default function DatasetsAdmin() {
             ),
           },
           { title: '源表', dataIndex: 'source_table' },
-          { title: '字段', dataIndex: 'columns', render: (c) => c?.join('、') },
+          {
+            title: '字段',
+            dataIndex: 'columns',
+            width: 240,
+            render: (cols: string[]) => {
+              const n = cols?.length || 0
+              if (!n) return '-'
+              return (
+                <Tooltip
+                  title={
+                    <div style={{ maxHeight: 260, overflowY: 'auto', maxWidth: 420 }}>
+                      {cols.join('、')}
+                    </div>
+                  }
+                >
+                  <Typography.Text style={{ fontSize: 12 }}>
+                    {cols.slice(0, FIELD_PREVIEW).join('、')}
+                    {n > FIELD_PREVIEW ? ` 等 ${n} 个字段` : ''}
+                  </Typography.Text>
+                </Tooltip>
+              )
+            },
+          },
           {
             title: '操作',
             render: (_, r) => (
@@ -244,7 +283,20 @@ export default function DatasetsAdmin() {
             {
               title: '可见字段',
               dataIndex: 'field_whitelist',
-              render: (f: string[] | null) => (f ? f.join('、') : '全部字段'),
+              render: (f: string[] | null) => {
+                if (!f || f.length === 0 || f.length === allFields.length) return '全部字段'
+                return (
+                  <Tooltip
+                    title={
+                      <div style={{ maxHeight: 260, overflowY: 'auto', maxWidth: 420 }}>
+                        {f.join('、')}
+                      </div>
+                    }
+                  >
+                    <span>{f.length} 个字段</span>
+                  </Tooltip>
+                )
+              },
             },
             {
               title: '行级规则',
@@ -291,23 +343,74 @@ export default function DatasetsAdmin() {
             />
           </Space>
           <div>
-            <p>字段白名单（不勾选 = 全部字段）：</p>
-            <Checkbox.Group
-              value={whitelist}
-              onChange={(v) => setWhitelist(v as string[])}
-              options={grantTarget?.columns || []}
-            />
+            <Space style={{ marginBottom: 8 }}>
+              <Switch
+                size="small"
+                checked={limitFields}
+                onChange={(v) => {
+                  setLimitFields(v)
+                  if (!v) {
+                    setWhitelist([])
+                    setFieldSearch('')
+                  }
+                }}
+              />
+              <Typography.Text style={{ fontSize: 13 }}>
+                限制可见字段
+              </Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {limitFields
+                  ? `（已选 ${whitelist.length} / 共 ${allFields.length} 个）`
+                  : `（关闭时该数据集全部 ${allFields.length} 个字段可见）`}
+              </Typography.Text>
+            </Space>
+            {limitFields && (
+              <>
+                <Input
+                  size="small"
+                  allowClear
+                  placeholder="搜索字段名，例如 order_no"
+                  value={fieldSearch}
+                  onChange={(e) => setFieldSearch(e.target.value)}
+                />
+                <Space size={8} style={{ marginTop: 8, marginBottom: 8 }} wrap>
+                  <Button size="small" onClick={() => setWhitelist(shownFields)}>
+                    全选当前 {shownFields.length} 项
+                  </Button>
+                  <Button size="small" onClick={() => setWhitelist([])}>
+                    清空
+                  </Button>
+                </Space>
+                <div
+                  style={{
+                    maxHeight: 180,
+                    overflowY: 'auto',
+                    border: '1px solid #f0f0f0',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                  }}
+                >
+                  <Checkbox.Group
+                    value={whitelist}
+                    onChange={(v) => setWhitelist(v as string[])}
+                    options={shownFields}
+                  />
+                </div>
+              </>
+            )}
           </div>
           <div>
             <p>行级过滤规则（全部为 AND 关系）：</p>
             {rules.map((rule, i) => (
               <Space key={i} style={{ marginBottom: 4 }}>
                 <Select
-                  style={{ width: 130 }}
+                  style={{ width: 160 }}
                   placeholder="字段"
+                  showSearch
+                  optionFilterProp="label"
                   value={rule.field}
                   onChange={(v) => setRules(rules.map((r, j) => (j === i ? { ...r, field: v } : r)))}
-                  options={(grantTarget?.columns || []).map((c: string) => ({ value: c, label: c }))}
+                  options={allFields.map((c: string) => ({ value: c, label: c }))}
                 />
                 <Select
                   style={{ width: 110 }}
