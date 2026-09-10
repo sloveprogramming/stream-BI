@@ -74,6 +74,10 @@ def create_app() -> FastAPI:
 
     app.include_router(web_support_router, prefix="/api/v1")
 
+    from app.assistant.chat_api import router as assistant_router
+
+    app.include_router(assistant_router, prefix="/api/v1")
+
     # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
     from pathlib import Path
 
