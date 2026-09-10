@@ -48,6 +48,9 @@ def _run(question: str, principal: AnyPrincipal, ctx: Context):
         sql = generate_sql(
             _system_prompt(), schema["prompt"] + "\n\n用户问题：" + question
         )
+        sql = sql.strip()
+        while sql.endswith(";"):
+            sql = sql[:-1].rstrip()
         yield from _sse([{"type": "sql", "sql": sql}])
         validate_sql(sql, schema["tables"])
         rewritten, params = rewrite_sql(sql, schema["tables"])

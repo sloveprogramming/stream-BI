@@ -36,6 +36,19 @@ def test_rejects_semicolon_injection():
         validate_sql("SELECT id FROM ods.order; DROP TABLE ods.order", T)
 
 
+def test_allows_trailing_semicolon():
+    validate_sql("SELECT id FROM ods.order;", T)
+
+
+def test_allows_alias_in_order_by():
+    validate_sql(
+        "SELECT o.id, COUNT(s.stock) AS detail_count "
+        "FROM ods.order o JOIN ods.stock s ON o.product_id = s.product_id "
+        "GROUP BY o.id ORDER BY detail_count DESC",
+        T,
+    )
+
+
 def test_rejects_non_select():
     with pytest.raises(SqlGuardError):
         validate_sql("UPDATE ods.order SET qty = 0", T)

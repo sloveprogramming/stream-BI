@@ -27,6 +27,9 @@ _WRITE_KEYWORDS = (
 
 def validate_sql(sql: str, tables: list[dict]) -> None:
     """校验 SQL 只读且只引用有权限的表与字段；不通过抛 SqlGuardError。"""
+    sql = sql.strip()
+    while sql.endswith(";"):
+        sql = sql[:-1].rstrip()
     if ";" in sql:
         raise SqlGuardError("只允许单条查询")
     try:
@@ -45,6 +48,11 @@ def validate_sql(sql: str, tables: list[dict]) -> None:
             raise SqlGuardError(f"检测到危险语句: {word}")
 
     allowed = {t["source_table"]: set(t["columns"]) for t in tables}
+    aliases: set[str] = set()
+    for select in expr.find_all(exp.Select):
+        for proj in select.expressions:
+            if proj.alias:
+                aliases.add(proj.alias)
     alias_map: dict[str, str] = {}
     for table in expr.find_all(exp.Table):
         full = f"{table.db}.{table.name}" if table.db else table.name
@@ -54,6 +62,8 @@ def validate_sql(sql: str, tables: list[dict]) -> None:
         alias_map[full] = full
 
     for col in expr.find_all(exp.Column):
+        if col.name in aliases:
+            continue
         if col.table:
             full = alias_map.get(col.table)
             if full is not None and col.name not in allowed[full]:

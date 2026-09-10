@@ -20,6 +20,12 @@ def _as_naive_utc(value):
     return value
 
 
+def _max_incremental(batch, field):
+    """取一批数据中增量字段的最大值，忽略 NULL；全为 NULL 时返回 None。"""
+    values = [row[field] for row in batch if row[field] is not None]
+    return max(values) if values else None
+
+
 def _row_hash(row: dict) -> str:
     return hashlib.sha1(
         json.dumps(row, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
@@ -47,12 +53,16 @@ def run_sync(
             for batch in iter_rows(erp_engine, spec, task.watermark, batch_size):
                 written += upsert_rows(pg_engine, task.target_table, batch, spec.pk_columns)
                 pulled += len(batch)
-                batch_max = _as_naive_utc(
-                    max(b[spec.incremental_field] for b in batch)
-                )
-                current = _as_naive_utc(new_watermark) if new_watermark is not None else None
-                if current is None or batch_max > current:
-                    new_watermark = batch_max
+                raw_max = _max_incremental(batch, spec.incremental_field)
+                if raw_max is not None:
+                    batch_max = _as_naive_utc(raw_max)
+                    current = (
+                        _as_naive_utc(new_watermark)
+                        if new_watermark is not None
+                        else None
+                    )
+                    if current is None or batch_max > current:
+                        new_watermark = batch_max
         else:
             existing: dict = {}
             with pg_engine.connect() as conn:
