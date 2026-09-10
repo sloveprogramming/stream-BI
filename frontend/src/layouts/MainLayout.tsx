@@ -2,7 +2,7 @@ import { Layout, Menu, Button, Space, Typography } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DatabaseOutlined, KeyOutlined, FileTextOutlined, TeamOutlined,
-  SettingOutlined, SyncOutlined, AuditOutlined, LogoutOutlined,
+  SettingOutlined, SyncOutlined, AuditOutlined, LogoutOutlined, RobotOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = Layout
@@ -14,6 +14,7 @@ export default function MainLayout() {
 
   const items = [
     { key: '/', icon: <DatabaseOutlined />, label: '数据集' },
+    { key: '/data-assistant', icon: <RobotOutlined />, label: '数据助手' },
     { key: '/my-keys', icon: <KeyOutlined />, label: '我的 API Key' },
     { key: '/my-reports', icon: <FileTextOutlined />, label: '我的报表' },
     ...(user?.is_admin
