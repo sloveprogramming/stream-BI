@@ -7,13 +7,18 @@ from app.api.health import router as health_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import logging
+
     from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
 
     from app.db import make_engine, make_session_factory
     from app.scheduler import refresh_jobs
     from app.settings import get_settings
+    from app.sync.discovery import discover_datasets
     from app.sync.puller import make_erp_engine
 
+    logger = logging.getLogger("app.main")
     settings = get_settings()
     pg_engine = make_engine(settings.database_url)
     erp_engine = make_erp_engine(
@@ -30,6 +35,30 @@ async def lifespan(app: FastAPI):
 
     refresh_jobs(scheduler, session_factory)
     refresh_report_jobs(scheduler, session_factory)
+
+    # 定时扫描 ods 新表并自动注册为数据集（ERP 定时同步建表后前端几秒内可见）
+    if settings.discovery_enabled:
+        def _discovery_job() -> None:
+            try:
+                discover_datasets(
+                    session_factory, pg_engine, settings.discovery_schema
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("数据集自动发现失败")
+
+        try:
+            _discovery_job()
+        except Exception:  # noqa: BLE001
+            logger.exception("启动时数据集自动发现失败")
+        scheduler.add_job(
+            _discovery_job,
+            IntervalTrigger(seconds=settings.discovery_interval_seconds),
+            id="dataset_discovery",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
     scheduler.start()
     app.state.scheduler = scheduler
 

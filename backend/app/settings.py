@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-chat"
     llm_timeout_seconds: int = 60
     assistant_max_rows: int = 1000
+    # 自动发现：定时扫描 ods 模式新表并注册为数据集
+    discovery_enabled: bool = True
+    discovery_interval_seconds: int = 10
+    discovery_schema: str = "ods"
 
 
 @lru_cache

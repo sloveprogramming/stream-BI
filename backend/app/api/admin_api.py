@@ -102,6 +102,21 @@ def create_dataset(
         return {"id": ds.id, "name": ds.name}
 
 
+@router.post("/datasets/discover")
+def discover_datasets_now(
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    """手动触发一次 ods 新表扫描并注册为数据集。"""
+    _require_admin(principal)
+    from app.sync.discovery import discover_datasets
+
+    created = discover_datasets(
+        ctx.session_factory, ctx.pg_engine, ctx.settings.discovery_schema
+    )
+    return {"count": len(created), "created": created}
+
+
 @router.patch("/datasets/{dataset_id}")
 def update_dataset(
     dataset_id: int,

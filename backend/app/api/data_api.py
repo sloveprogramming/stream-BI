@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import or_
 
-from app.access.grants import get_effective_grant
+from app.access.grants import resolve_grant
 from app.access.scoped_query import build_count_sql, build_scoped_sql
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
@@ -18,19 +18,15 @@ def list_datasets(
 ):
     user = principal.user
     with ctx.session_factory() as session:
-        conditions = [DatasetGrant.user_id == user.id]
-        if user.role_id is not None:
-            conditions.append(DatasetGrant.role_id == user.role_id)
-        ids_subq = (
-            session.query(DatasetGrant.dataset_id)
-            .filter(or_(*conditions))
-        )
-        rows = (
-            session.query(Dataset)
-            .filter(Dataset.enabled.is_(True), Dataset.id.in_(ids_subq))
-            .order_by(Dataset.id)
-            .all()
-        )
+        query = session.query(Dataset).filter(Dataset.enabled.is_(True))
+        # 管理员可见全部数据集（含自动发现的新表），普通用户仅见已授权的
+        if not getattr(user, "is_admin", False):
+            conditions = [DatasetGrant.user_id == user.id]
+            if user.role_id is not None:
+                conditions.append(DatasetGrant.role_id == user.role_id)
+            ids_subq = session.query(DatasetGrant.dataset_id).filter(or_(*conditions))
+            query = query.filter(Dataset.id.in_(ids_subq))
+        rows = query.order_by(Dataset.id).all()
         return [
             {
                 "id": d.id,
@@ -38,6 +34,7 @@ def list_datasets(
                 "title": d.title,
                 "description": d.description,
                 "columns": d.columns,
+                "column_count": len(d.columns or []),
             }
             for d in rows
         ]
@@ -60,7 +57,7 @@ def query_rows(
         ds = session.query(Dataset).filter_by(name=name, enabled=True).first()
         if ds is None:
             raise HTTPException(status_code=404, detail="dataset not found")
-        grant = get_effective_grant(session, principal.user, ds.id)
+        grant = resolve_grant(session, principal.user, ds.id)
         if grant is None:
             raise HTTPException(status_code=403, detail="no grant")
         try:

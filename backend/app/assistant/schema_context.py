@@ -1,5 +1,5 @@
 """按用户的有效授权收集数据集结构，生成给大模型的 schema 上下文。"""
-from app.access.grants import get_effective_grant
+from app.access.grants import resolve_grant
 from app.models import Dataset
 
 _SAMPLE_LIMIT = 3
@@ -17,7 +17,7 @@ def build_schema_context(session_factory, pg_engine, user) -> dict:
         )
         tables = []
         for ds in datasets:
-            grant = get_effective_grant(session, user, ds.id)
+            grant = resolve_grant(session, user, ds.id)
             if grant is None:
                 continue
             columns = grant.field_whitelist or list(ds.columns)

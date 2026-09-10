@@ -20,18 +20,23 @@ def test_build_schema_only_authorized(pg_session_factory, pg_engine):
         )
 
     with pg_session_factory() as s:
-        # 防御：清理上次运行残留
+        # 防御：清理上次运行残留（即使上次失败、用户已不存在，也按名称兜底清理）
         old_u = s.query(User).filter_by(username="sc_u").first()
+        stale_role_ids = s.query(Role.id).filter_by(name="sc_r")
+        stale_ds_ids = s.query(Dataset.id).filter(Dataset.name.in_(["sc_a", "sc_b"]))
+        s.query(DatasetGrant).filter(
+            DatasetGrant.role_id.in_(stale_role_ids)
+        ).delete(synchronize_session=False)
+        s.query(DatasetGrant).filter(
+            DatasetGrant.dataset_id.in_(stale_ds_ids)
+        ).delete(synchronize_session=False)
+        s.query(Dataset).filter(Dataset.name.in_(["sc_a", "sc_b"])).delete(
+            synchronize_session=False
+        )
+        s.query(Role).filter_by(name="sc_r").delete()
         if old_u is not None:
-            s.query(DatasetGrant).filter(
-                DatasetGrant.role_id.in_(s.query(Role.id).filter_by(name="sc_r"))
-            ).delete(synchronize_session=False)
-            s.query(Dataset).filter(Dataset.name.in_(["sc_a", "sc_b"])).delete(
-                synchronize_session=False
-            )
-            s.query(Role).filter_by(name="sc_r").delete()
             s.query(User).filter_by(username="sc_u").delete()
-            s.commit()
+        s.commit()
 
         u = User(username="sc_u", password_hash="x")
         r = Role(name="sc_r")

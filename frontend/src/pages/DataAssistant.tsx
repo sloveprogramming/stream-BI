@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Collapse, Input, Space, Spin, Table, Typography, message } from 'antd'
-import { DownloadOutlined, SendOutlined, RobotOutlined, UserOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Alert, Button, Card, Col, Collapse, Empty, Input, List, Popconfirm, Row, Space, Spin,
+  Table, Tag, Tooltip, Typography, message,
+} from 'antd'
+import {
+  CopyOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, RobotOutlined,
+  SendOutlined, UserOutlined,
+} from '@ant-design/icons'
 import { getFieldLabels, labelOf } from '../api/fieldLabels'
 
 type Msg = {
@@ -9,29 +15,165 @@ type Msg = {
   sql?: string
   columns?: string[]
   rows?: any[][]
+  rowCount?: number
   error?: string
   loading?: boolean
 }
 
+type Session = {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: Msg[]
+}
+
+const STORE_KEY = 'assistant_sessions_v1'
+const ACTIVE_KEY = 'assistant_active_session_v1'
+const MAX_SESSIONS = 20
+const PERSIST_ROWS = 20
+
+function newId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function makeSession(): Session {
+  const now = Date.now()
+  return { id: newId(), title: '新会话', createdAt: now, updatedAt: now, messages: [] }
+}
+
+/** 持久化时裁剪结果行，避免撑爆 localStorage 配额。 */
+function slim(sessions: Session[]): Session[] {
+  return sessions.slice(0, MAX_SESSIONS).map((s) => ({
+    ...s,
+    messages: s.messages
+      .filter((m) => !m.loading)
+      .map((m) =>
+        m.rows && m.rows.length > PERSIST_ROWS
+          ? { ...m, rows: m.rows.slice(0, PERSIST_ROWS) }
+          : m,
+      ),
+  }))
+}
+
+function loadSessions(): Session[] {
+  try {
+    const raw = localStorage.getItem(STORE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function persistSessions(list: Session[]) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(slim(list)))
+  } catch {
+    try {
+      const noRows = list.map((s) => ({
+        ...s,
+        messages: s.messages.map((m) => ({ ...m, rows: undefined, columns: undefined })),
+      }))
+      localStorage.setItem(STORE_KEY, JSON.stringify(noRows.slice(0, MAX_SESSIONS)))
+    } catch {
+      /* 放弃持久化，不影响当前会话 */
+    }
+  }
+}
+
 export default function DataAssistant() {
-  const [messages, setMessages] = useState<Msg[]>([])
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [activeId, setActiveId] = useState('')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const listRef = useRef<HTMLDivElement>(null)
 
+  const active = useMemo(
+    () => sessions.find((s) => s.id === activeId) || sessions[0],
+    [sessions, activeId],
+  )
+  const messages = active?.messages || []
+
   useEffect(() => {
     getFieldLabels().then(setLabels)
+    const stored = loadSessions()
+    if (stored.length === 0) {
+      const s = makeSession()
+      setSessions([s])
+      setActiveId(s.id)
+      return
+    }
+    const savedActive = localStorage.getItem(ACTIVE_KEY) || ''
+    setSessions(stored)
+    setActiveId(stored.some((s) => s.id === savedActive) ? savedActive : stored[0].id)
   }, [])
 
+  useEffect(() => {
+    if (sessions.length) persistSessions(sessions)
+  }, [sessions])
+
+  useEffect(() => {
+    if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
+  }, [activeId])
+
+  const updateActive = (fn: (msgs: Msg[]) => Msg[], touchTitle = false) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== activeId) return s
+        const next = fn(s.messages)
+        const firstQ = next.find((m) => m.role === 'user')?.text
+        return {
+          ...s,
+          messages: next,
+          title: touchTitle && firstQ ? firstQ.slice(0, 24) : s.title,
+          updatedAt: Date.now(),
+        }
+      }),
+    )
+  }
+
   const patchLast = (fn: (m: Msg) => Msg) => {
-    setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)))
+    updateActive((msgs) => msgs.map((m, i) => (i === msgs.length - 1 ? fn(m) : m)))
   }
 
   const scrollToBottom = () => {
     setTimeout(() => {
       if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
     }, 50)
+  }
+
+  const createSession = () => {
+    const s = makeSession()
+    setSessions((prev) => [s, ...prev])
+    setActiveId(s.id)
+    setInput('')
+  }
+
+  const removeSession = (id: string) => {
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id)
+      if (next.length === 0) {
+        const s = makeSession()
+        setActiveId(s.id)
+        return [s]
+      }
+      if (id === activeId) setActiveId(next[0].id)
+      return next
+    })
+  }
+
+  const copySessionId = async () => {
+    if (!active) return
+    try {
+      await navigator.clipboard.writeText(active.id)
+      message.success('会话 ID 已复制')
+    } catch {
+      message.info(active.id)
+    }
   }
 
   const exportCsv = (m: Msg) => {
@@ -42,7 +184,7 @@ export default function DataAssistant() {
     const url = URL.createObjectURL(new Blob(['\ufeff' + header + '\n' + body], { type: 'text/csv' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = 'assistant_result.csv'
+    a.download = `assistant_${active?.id.slice(0, 8) || 'result'}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -59,15 +201,19 @@ export default function DataAssistant() {
 
   const send = async () => {
     const question = input.trim()
-    if (!question || busy) return
+    if (!question || busy || !active) return
     const history = buildHistory(messages)
+    const sessionId = active.id
     setInput('')
     setBusy(true)
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text: question },
-      { role: 'assistant', text: '', loading: true },
-    ])
+    updateActive(
+      (msgs) => [
+        ...msgs,
+        { role: 'user', text: question },
+        { role: 'assistant', text: '', loading: true },
+      ],
+      true,
+    )
     scrollToBottom()
     try {
       const resp = await fetch('/api/v1/assistant/chat', {
@@ -76,7 +222,7 @@ export default function DataAssistant() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({ question, history, session_id: sessionId }),
       })
       if (resp.status === 401) {
         localStorage.clear()
@@ -90,7 +236,13 @@ export default function DataAssistant() {
       const handle = (ev: any) => {
         if (ev.type === 'sql') patchLast((m) => ({ ...m, sql: ev.sql }))
         else if (ev.type === 'result')
-          patchLast((m) => ({ ...m, columns: ev.columns, rows: ev.rows, loading: false }))
+          patchLast((m) => ({
+            ...m,
+            columns: ev.columns,
+            rows: ev.rows,
+            rowCount: ev.row_count ?? ev.rows?.length,
+            loading: false,
+          }))
         else if (ev.type === 'error') patchLast((m) => ({ ...m, error: ev.message, loading: false }))
         else if (ev.type === 'done') patchLast((m) => ({ ...m, loading: false }))
         scrollToBottom()
@@ -124,117 +276,183 @@ export default function DataAssistant() {
 
   return (
     <Card
-      title="数据助手"
+      title={
+        <Space size={12} wrap>
+          <span>数据助手</span>
+          {active && (
+            <Tooltip title={`会话 ID：${active.id}`}>
+              <Tag icon={<CopyOutlined />} color="blue" style={{ cursor: 'pointer' }} onClick={copySessionId}>
+                会话 {active.id.slice(0, 8)}
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
+      }
+      extra={
+        <Button icon={<PlusOutlined />} onClick={createSession}>
+          新建会话
+        </Button>
+      }
       styles={{
         body: { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 220px)', padding: 16 },
       }}
     >
-      <div
-        ref={listRef}
-        style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 8, background: '#fafafa', borderRadius: 8, padding: 12 }}
-      >
-        {messages.length === 0 && (
-          <Typography.Paragraph type="secondary">
-            用自然语言提问，例如：“把订单和库存按商品 ID 合并，看各商品的销量和库存”。可以连续追问，比如接着问“那按仓库分组呢”。
-          </Typography.Paragraph>
-        )}
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}
-            >
-              <Card
-                size="small"
-                style={{
-                  maxWidth: '90%',
-                  background: m.role === 'user' ? '#e6f4ff' : '#fff',
-                  overflow: 'hidden',
-                }}
-              >
-                <Space size={6} style={{ marginBottom: 4 }}>
-                  {m.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {m.role === 'user' ? '我' : '数据助手'}
-                  </Typography.Text>
-                </Space>
-                {m.role === 'user' ? (
-                  <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
-                ) : (
-                  <>
-                    {m.loading && (
-                      <Space>
-                        <Spin size="small" />
-                        <Typography.Text type="secondary">正在理解问题并查询…</Typography.Text>
-                      </Space>
-                    )}
-                    {m.error && <Alert type="error" message={m.error} showIcon style={{ marginTop: 4 }} />}
-                    {m.sql && (
-                      <Collapse
-                        size="small"
-                        style={{ marginTop: 8 }}
-                        items={[
-                          {
-                            key: 'sql',
-                            label: '查看生成的 SQL',
-                            children: (
-                              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontSize: 12 }}>
-                                {m.sql}
-                              </pre>
-                            ),
-                          },
-                        ]}
-                      />
-                    )}
-                    {m.columns && m.rows && (
+      <Row gutter={12} style={{ flex: 1, minHeight: 0 }}>
+        <Col xs={0} md={7} lg={6} style={{ height: '100%' }}>
+          <div style={{ height: '100%', overflowY: 'auto', borderRight: '1px solid #f0f0f0', paddingRight: 8 }}>
+            <List
+              size="small"
+              dataSource={sessions}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话" /> }}
+              renderItem={(s) => (
+                <List.Item
+                  style={{
+                    cursor: 'pointer',
+                    background: s.id === activeId ? '#e6f4ff' : undefined,
+                    borderRadius: 6,
+                    paddingInline: 8,
+                  }}
+                  onClick={() => setActiveId(s.id)}
+                  actions={[
+                    <Popconfirm
+                      key="del"
+                      title="删除该会话？"
+                      onConfirm={() => removeSession(s.id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <DeleteOutlined onClick={(e) => e.stopPropagation()} />
+                    </Popconfirm>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Typography.Text ellipsis style={{ fontSize: 13 }}>
+                        {s.title}
+                      </Typography.Text>
+                    }
+                    description={
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {new Date(s.updatedAt).toLocaleString()} · {s.messages.filter((m) => m.role === 'user').length} 问
+                      </Typography.Text>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
+          </div>
+        </Col>
+        <Col xs={24} md={17} lg={18} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <div
+            ref={listRef}
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#fafafa', borderRadius: 8, padding: 12 }}
+          >
+            {messages.length === 0 && (
+              <Typography.Paragraph type="secondary">
+                用自然语言提问，例如：“把订单和库存按商品 ID 合并，看各商品的销量和库存”。可以连续追问，比如接着问“那按仓库分组呢”。
+              </Typography.Paragraph>
+            )}
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              {messages.map((m, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                  <Card
+                    size="small"
+                    style={{
+                      maxWidth: '90%',
+                      background: m.role === 'user' ? '#e6f4ff' : '#fff',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <Space size={6} style={{ marginBottom: 4 }}>
+                      {m.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {m.role === 'user' ? '我' : '数据助手'}
+                      </Typography.Text>
+                    </Space>
+                    {m.role === 'user' ? (
+                      <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
+                    ) : (
                       <>
-                        <Table
-                          size="small"
-                          style={{ marginTop: 8, maxWidth: '100%' }}
-                          rowKey={(_, idx) => String(idx)}
-                          scroll={{ x: 'max-content' }}
-                          pagination={{ pageSize: 10, size: 'small' }}
-                          dataSource={m.rows.map((r) =>
-                            Object.fromEntries(m.columns!.map((c, j) => [c, r[j]])),
-                          )}
-                          columns={m.columns.map((c) => ({
-                            title: labelOf(labels, c),
-                            dataIndex: c,
-                            key: c,
-                            ellipsis: true,
-                            width: 150,
-                          }))}
-                        />
-                        <Button
-                          size="small"
-                          icon={<DownloadOutlined />}
-                          style={{ marginTop: 8 }}
-                          onClick={() => exportCsv(m)}
-                        >
-                          导出 CSV（{m.rows.length} 行）
-                        </Button>
+                        {m.loading && (
+                          <Space>
+                            <Spin size="small" />
+                            <Typography.Text type="secondary">正在理解问题并查询…</Typography.Text>
+                          </Space>
+                        )}
+                        {m.error && <Alert type="error" message={m.error} showIcon style={{ marginTop: 4 }} />}
+                        {m.sql && (
+                          <Collapse
+                            size="small"
+                            style={{ marginTop: 8 }}
+                            items={[
+                              {
+                                key: 'sql',
+                                label: '查看生成的 SQL',
+                                children: (
+                                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontSize: 12 }}>
+                                    {m.sql}
+                                  </pre>
+                                ),
+                              },
+                            ]}
+                          />
+                        )}
+                        {m.columns && m.rows && (
+                          <>
+                            <Table
+                              size="small"
+                              style={{ marginTop: 8, maxWidth: '100%' }}
+                              rowKey={(_, idx) => String(idx)}
+                              scroll={{ x: 'max-content' }}
+                              pagination={{ pageSize: 10, size: 'small' }}
+                              dataSource={m.rows.map((r) =>
+                                Object.fromEntries(m.columns!.map((c, j) => [c, r[j]])),
+                              )}
+                              columns={m.columns.map((c) => ({
+                                title: labelOf(labels, c),
+                                dataIndex: c,
+                                key: c,
+                                ellipsis: true,
+                                width: 150,
+                              }))}
+                            />
+                            {m.rowCount != null && m.rowCount > m.rows.length && (
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                历史记录仅保留前 {m.rows.length} 行（共 {m.rowCount} 行）
+                              </Typography.Text>
+                            )}
+                            <Button
+                              size="small"
+                              icon={<DownloadOutlined />}
+                              style={{ marginTop: 8 }}
+                              onClick={() => exportCsv(m)}
+                            >
+                              导出 CSV（{m.rowCount ?? m.rows.length} 行）
+                            </Button>
+                          </>
+                        )}
                       </>
                     )}
-                  </>
-                )}
-              </Card>
-            </div>
-          ))}
-        </Space>
-      </div>
-      <Space.Compact style={{ width: '100%', marginTop: 12 }}>
-        <Input
-          size="large"
-          placeholder="输入你的问题，可连续追问…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onPressEnter={send}
-          disabled={busy}
-        />
-        <Button size="large" type="primary" icon={<SendOutlined />} onClick={send} loading={busy}>
-          发送
-        </Button>
-      </Space.Compact>
+                  </Card>
+                </div>
+              ))}
+            </Space>
+          </div>
+          <Space.Compact style={{ width: '100%', marginTop: 12 }}>
+            <Input
+              size="large"
+              placeholder="输入你的问题，可连续追问…"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onPressEnter={send}
+              disabled={busy}
+            />
+            <Button size="large" type="primary" icon={<SendOutlined />} onClick={send} loading={busy}>
+              发送
+            </Button>
+          </Space.Compact>
+        </Col>
+      </Row>
     </Card>
   )
 }

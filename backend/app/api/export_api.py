@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
-from app.access.grants import get_effective_grant
+from app.access.grants import resolve_grant
 from app.access.scoped_query import build_scoped_sql
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
@@ -28,7 +28,7 @@ def _header_labels(columns: list[str]) -> list[str]:
 
 
 def _grant_for(session, principal: AnyPrincipal, ds: Dataset):
-    return get_effective_grant(session, principal.user, ds.id)
+    return resolve_grant(session, principal.user, ds.id)
 
 @router.get("/{name}/export")
 def export_rows(
