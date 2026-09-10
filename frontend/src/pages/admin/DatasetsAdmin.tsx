@@ -16,6 +16,9 @@ export default function DatasetsAdmin() {
   const [whitelist, setWhitelist] = useState<string[]>([])
   const [rules, setRules] = useState<any[]>([])
   const [form] = Form.useForm()
+  const [roleOpen, setRoleOpen] = useState(false)
+  const [roleName, setRoleName] = useState('')
+  const [roleDesc, setRoleDesc] = useState('')
 
   const load = () => {
     http.get('/admin/datasets').then((r) => setDatasets(r.data))
@@ -67,7 +70,12 @@ export default function DatasetsAdmin() {
   return (
     <Card
       title="数据集与授权"
-      extra={<Button type="primary" onClick={() => setDsOpen(true)}>注册数据集</Button>}
+      extra={
+        <Space>
+          <Button onClick={() => setRoleOpen(true)}>新建角色</Button>
+          <Button type="primary" onClick={() => setDsOpen(true)}>注册数据集</Button>
+        </Space>
+      }
     >
       <Table
         rowKey="id"
@@ -86,6 +94,32 @@ export default function DatasetsAdmin() {
           },
         ]}
       />
+      <Modal
+        open={roleOpen}
+        title="新建角色"
+        onOk={async () => {
+          try {
+            await http.post('/admin/roles', { name: roleName, description: roleDesc || null })
+            message.success('角色已创建')
+            setRoleOpen(false)
+            setRoleName('')
+            setRoleDesc('')
+            load()
+          } catch (e: any) {
+            message.error(e.response?.data?.detail || '创建失败')
+          }
+        }}
+        onCancel={() => setRoleOpen(false)}
+      >
+        <Form layout="vertical">
+          <Form.Item label="角色名称（英文标识）" required>
+            <Input placeholder="east_sales" value={roleName} onChange={(e) => setRoleName(e.target.value)} />
+          </Form.Item>
+          <Form.Item label="描述">
+            <Input placeholder="华东区销售" value={roleDesc} onChange={(e) => setRoleDesc(e.target.value)} />
+          </Form.Item>
+        </Form>
+      </Modal>
       <Modal open={dsOpen} title="注册数据集" onOk={register} onCancel={() => setDsOpen(false)}>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="数据集名称（英文标识）" rules={[{ required: true }]}>
