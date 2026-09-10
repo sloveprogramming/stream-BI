@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Select, Switch, Table, message } from 'antd'
+import { Button, Card, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tooltip, message } from 'antd'
+import { DeleteOutlined } from '@ant-design/icons'
 import http from '../../api/http'
 
 export default function Users() {
@@ -7,6 +8,7 @@ export default function Users() {
   const [roles, setRoles] = useState<any[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  const me = JSON.parse(localStorage.getItem('user') || 'null')
 
   const load = () => {
     http.get('/admin/users').then((r) => setItems(r.data))
@@ -26,6 +28,16 @@ export default function Users() {
       load()
     } catch (e: any) {
       message.error(e.response?.data?.detail || '创建失败')
+    }
+  }
+
+  const remove = async (r: any) => {
+    try {
+      const { data } = await http.delete(`/admin/users/${r.id}`)
+      message.success(`已删除用户 ${data.username}`)
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '删除失败')
     }
   }
 
@@ -55,6 +67,35 @@ export default function Users() {
             title: '状态',
             dataIndex: 'enabled',
             render: (v) => (v ? '启用' : '停用'),
+          },
+          {
+            title: '操作',
+            width: 100,
+            render: (_, r) => {
+              const isSelf = me?.id === r.id
+              return (
+                <Tooltip title={isSelf ? '不能删除当前登录账号' : ''}>
+                  <Popconfirm
+                    title={`确认删除用户「${r.username}」？`}
+                    description={
+                      <div style={{ maxWidth: 320 }}>
+                        将同时删除该用户的 API Key、数据集直授、报表任务；历史审计日志保留（仅解除归属）。
+                        此操作不可恢复。
+                      </div>
+                    }
+                    okText="确认删除"
+                    okButtonProps={{ danger: true }}
+                    cancelText="取消"
+                    onConfirm={() => remove(r)}
+                    disabled={isSelf}
+                  >
+                    <Button danger size="small" icon={<DeleteOutlined />} disabled={isSelf}>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Tooltip>
+              )
+            },
           },
         ]}
       />

@@ -1,11 +1,20 @@
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 
 from app.access.scoped_query import check_ident
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
-from app.models import ApiKey, AuditLog, Dataset, DatasetGrant, Role, User
+from app.models import (
+    ApiKey,
+    AuditLog,
+    Dataset,
+    DatasetGrant,
+    ReportRun,
+    ReportTask,
+    Role,
+    User,
+)
 from app.security.apikeys import generate_key, hash_secret
 from app.security.passwords import hash_password
 
@@ -43,6 +52,78 @@ def create_user(
         session.add(user)
         session.commit()
         return {"id": user.id, "username": user.username}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    request: Request,
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    """删除用户，并清理其 API Key / 数据集直授 / 报表任务。
+
+    审计日志不删除：解除外键引用（user_id、api_key_id 置空）并在 detail 里记录被删用户名，
+    保留完整审计链。保护：不能删除当前登录账号（请求方本身必须是管理员，因此系统始终至少留一个管理员）。
+    """
+    _require_admin(principal)
+    with ctx.session_factory() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if user.id == principal.user.id:
+            raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+
+        username = user.username
+        key_ids = [
+            row[0] for row in session.query(ApiKey.id).filter_by(user_id=user.id).all()
+        ]
+        if key_ids:
+            session.query(AuditLog).filter(AuditLog.api_key_id.in_(key_ids)).update(
+                {"api_key_id": None}, synchronize_session=False
+            )
+        for log in session.query(AuditLog).filter_by(user_id=user.id).all():
+            log.user_id = None
+            detail = dict(log.detail or {})
+            detail["deleted_user"] = username
+            log.detail = detail
+
+        task_ids = [
+            row[0]
+            for row in session.query(ReportTask.id)
+            .filter_by(owner_user_id=user.id)
+            .all()
+        ]
+        if task_ids:
+            session.query(ReportRun).filter(
+                ReportRun.task_id.in_(task_ids)
+            ).delete(synchronize_session=False)
+            session.query(ReportTask).filter(
+                ReportTask.id.in_(task_ids)
+            ).delete(synchronize_session=False)
+
+        session.query(DatasetGrant).filter_by(user_id=user.id).delete(
+            synchronize_session=False
+        )
+        session.query(ApiKey).filter_by(user_id=user.id).delete(
+            synchronize_session=False
+        )
+        session.delete(user)
+        session.commit()
+
+    # 摘掉该用户残留的报表定时任务（失败不影响删除结果）
+    try:
+        from app.reports.scheduler import refresh_report_jobs
+
+        refresh_report_jobs(request.app.state.scheduler, ctx.session_factory)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "deleted": user_id,
+        "username": username,
+        "removed": {"api_keys": len(key_ids), "report_tasks": len(task_ids)},
+    }
 
 
 @router.post("/roles", status_code=201)
