@@ -25,7 +25,13 @@ export default function DatasetQuery() {
   }, [load])
 
   const tableColumns = [
-    ...columns.map((c) => ({ title: c, dataIndex: c, key: c })),
+    ...columns.map((c) => ({
+      title: c,
+      dataIndex: c,
+      key: c,
+      width: c === 'buyer_message' || c === 'receiver_name' ? 200 : 150,
+      ellipsis: true,
+    })),
   ]
 
   const onFilter = (v: any) => {
@@ -76,6 +82,7 @@ export default function DatasetQuery() {
       </Form>
       <Table
         rowKey={(r) => JSON.stringify(r)}
+        scroll={{ x: 'max-content' }}
         columns={tableColumns}
         dataSource={rows}
         pagination={{

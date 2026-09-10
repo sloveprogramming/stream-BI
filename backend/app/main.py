@@ -77,8 +77,12 @@ def create_app() -> FastAPI:
     # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
     from pathlib import Path
 
-    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    if frontend_dist.exists():
+    frontend_dist = None
+    for _parent in Path(__file__).resolve().parents:
+        if (_parent / "frontend" / "dist").is_dir():
+            frontend_dist = _parent / "frontend" / "dist"
+            break
+    if frontend_dist:
         from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
 
