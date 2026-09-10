@@ -1,9 +1,11 @@
 import csv
 import io
+import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from app.access.grants import get_effective_grant
@@ -14,6 +16,16 @@ from app.settings import get_settings
 
 router = APIRouter(prefix="/datasets", tags=["export"])
 
+_LABELS_PATH = Path(__file__).resolve().parents[1] / "assistant" / "field_labels.json"
+try:
+    _FIELD_LABELS = json.loads(_LABELS_PATH.read_text(encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    _FIELD_LABELS = {}
+
+
+def _header_labels(columns: list[str]) -> list[str]:
+    return [_FIELD_LABELS.get(c, c) for c in columns]
+
 
 def _grant_for(session, principal: AnyPrincipal, ds: Dataset):
     return get_effective_grant(session, principal.user, ds.id)
@@ -21,6 +33,7 @@ def _grant_for(session, principal: AnyPrincipal, ds: Dataset):
 @router.get("/{name}/export")
 def export_rows(
     name: str,
+    request: Request,
     format: str = Query("csv", pattern="^(csv|xlsx)$"),
     principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
@@ -36,7 +49,13 @@ def export_rows(
         grant = _grant_for(session, principal, ds)
         if grant is None:
             raise HTTPException(status_code=403, detail="no grant")
-        sql, params = build_scoped_sql(ds, grant, {}, max_rows, 0)
+        filters = {
+            k: v for k, v in request.query_params.items() if k != "format"
+        }
+        try:
+            sql, params = build_scoped_sql(ds, grant, filters, max_rows, 0)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         with ctx.pg_engine.connect() as conn:
             result = conn.execute(text(sql), params)
             rows = result.fetchmany(max_rows + 1)
@@ -47,7 +66,7 @@ def export_rows(
         if format == "csv":
             buf = io.StringIO()
             writer = csv.writer(buf)
-            writer.writerow(grant.field_whitelist or list(ds.columns))
+            writer.writerow(_header_labels(grant.field_whitelist or list(ds.columns)))
             writer.writerows(rows)
             content = buf.getvalue().encode("utf-8-sig")
             media = "text/csv; charset=utf-8"
@@ -57,7 +76,7 @@ def export_rows(
 
             wb = Workbook(write_only=True)
             ws = wb.create_sheet()
-            ws.append(grant.field_whitelist or list(ds.columns))
+            ws.append(_header_labels(grant.field_whitelist or list(ds.columns)))
             for row in rows:
                 ws.append(list(row))
             out = io.BytesIO()

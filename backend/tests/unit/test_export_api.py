@@ -93,6 +93,15 @@ def test_export_csv_scoped(api_client, pg_session_factory, pg_engine):
         r = api_client.get(f"/api/v1/datasets/{ds_name}/export?format=xlsx", headers=user_headers)
         assert r.status_code == 200
         assert "spreadsheetml" in r.headers["content-type"]
+
+        # 导出必须带筛选条件生效（amount=10 只剩 1 行）
+        r = api_client.get(
+            f"/api/v1/datasets/{ds_name}/export",
+            params={"format": "csv", "amount": "10"},
+            headers=user_headers,
+        )
+        assert r.status_code == 200
+        assert len(r.text.strip().splitlines()) == 2
     finally:
         with pg_session_factory() as s:
             s.query(AuditLog).filter_by(user_id=user_id).delete()

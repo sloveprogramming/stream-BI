@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+import json
+from pathlib import Path
 
 from app.api.deps import (
     AnyPrincipal,
@@ -12,6 +14,18 @@ from app.models import ApiKey, Dataset, Role, User
 from app.security.apikeys import generate_key, hash_secret
 
 router = APIRouter(tags=["web-support"])
+
+_LABELS_PATH = Path(__file__).resolve().parents[1] / "assistant" / "field_labels.json"
+try:
+    _FIELD_LABELS = json.loads(_LABELS_PATH.read_text(encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    _FIELD_LABELS = {}
+
+
+@router.get("/meta/field-labels")
+def field_labels(principal=Depends(get_any_principal)):
+    """英文列名 → 中文显示名（来自旺店通官方接口文档）。"""
+    return _FIELD_LABELS
 
 
 class KeyBody(BaseModel):
