@@ -22,7 +22,7 @@ services:
     container_name: bisql-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "19530:8000"
     env_file: ../.env
     environment:
       BISQL_DATABASE_URL: postgresql+psycopg://bisql:${POSTGRES_PASSWORD}@db:5432/bisql
@@ -32,3 +32,4 @@ services:
 
 volumes:
   bisql_pgdata:
+
