@@ -6,3 +6,5 @@ backend/.venv/
 .local/
 .superpowers/
 backend/exports/
+/wdt_stockout_*.json
+
