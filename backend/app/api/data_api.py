@@ -1,7 +1,9 @@
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import or_
 
+from app.access.grants import get_effective_grant
 from app.access.scoped_query import build_count_sql, build_scoped_sql
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
@@ -15,16 +17,17 @@ def list_datasets(
     ctx: Context = Depends(get_ctx),
 ):
     user = principal.user
-    if user.role_id is None:
-        return []
     with ctx.session_factory() as session:
+        conditions = [DatasetGrant.user_id == user.id]
+        if user.role_id is not None:
+            conditions.append(DatasetGrant.role_id == user.role_id)
+        ids_subq = (
+            session.query(DatasetGrant.dataset_id)
+            .filter(or_(*conditions))
+        )
         rows = (
             session.query(Dataset)
-            .join(DatasetGrant, DatasetGrant.dataset_id == Dataset.id)
-            .filter(
-                DatasetGrant.role_id == user.role_id,
-                Dataset.enabled.is_(True),
-            )
+            .filter(Dataset.enabled.is_(True), Dataset.id.in_(ids_subq))
             .order_by(Dataset.id)
             .all()
         )
@@ -56,13 +59,7 @@ def query_rows(
         ds = session.query(Dataset).filter_by(name=name, enabled=True).first()
         if ds is None:
             raise HTTPException(status_code=404, detail="dataset not found")
-        if principal.user.role_id is None:
-            raise HTTPException(status_code=403, detail="no grant")
-        grant = (
-            session.query(DatasetGrant)
-            .filter_by(role_id=principal.user.role_id, dataset_id=ds.id)
-            .first()
-        )
+        grant = get_effective_grant(session, principal.user, ds.id)
         if grant is None:
             raise HTTPException(status_code=403, detail="no grant")
         try:

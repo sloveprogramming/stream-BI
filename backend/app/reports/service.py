@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from app.access.grants import get_effective_grant
 from app.access.scoped_query import build_scoped_sql
 from app.models import Dataset, DatasetGrant, ReportRun, ReportTask, User
 
@@ -23,11 +24,7 @@ def generate_report_file(task: ReportTask) -> ReportRun:
         run = ReportRun(task_id=task.id, file_name="", status="failed")
         try:
             owner = session.get(User, task.owner_user_id)
-            grant = (
-                session.query(DatasetGrant)
-                .filter_by(role_id=owner.role_id, dataset_id=task.dataset_id)
-                .first()
-            )
+            grant = get_effective_grant(session, owner, task.dataset_id)
             if grant is None:
                 raise ValueError("owner 无该数据集授权")
             sql, params = build_scoped_sql(ds, grant, task.filters or {}, settings.export_max_rows, 0)

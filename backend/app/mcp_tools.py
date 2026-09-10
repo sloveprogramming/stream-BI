@@ -1,17 +1,12 @@
 from sqlalchemy import text as sa_text
 
+from app.access.grants import get_effective_grant
 from app.access.scoped_query import build_count_sql, build_scoped_sql
 from app.models import AuditLog, Dataset, DatasetGrant
 
 
 def _grant_for(session, principal, ds: Dataset) -> DatasetGrant:
-    if getattr(principal.user, "role_id", None) is None:
-        raise ValueError(f"无数据集授权: {ds.name}")
-    grant = (
-        session.query(DatasetGrant)
-        .filter_by(role_id=principal.user.role_id, dataset_id=ds.id)
-        .first()
-    )
+    grant = get_effective_grant(session, principal.user, ds.id)
     if grant is None:
         raise ValueError(f"无数据集授权: {ds.name}")
     return grant

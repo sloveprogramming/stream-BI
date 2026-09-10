@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 
 from app.access.scoped_query import check_ident
-from app.api.deps import Context, Principal, get_ctx, get_principal
+from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import ApiKey, AuditLog, Dataset, DatasetGrant, Role, User
 from app.security.apikeys import generate_key, hash_secret
 from app.security.passwords import hash_password
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _VALID_OPS = {"eq", "ne", "gt", "ge", "lt", "le", "like"}
 
 
-def _require_admin(principal: Principal) -> None:
+def _require_admin(principal: AnyPrincipal) -> None:
     if not principal.user.is_admin:
         raise HTTPException(status_code=403, detail="admin only")
 
@@ -22,7 +22,7 @@ def _require_admin(principal: Principal) -> None:
 @router.post("/users", status_code=201)
 def create_user(
     body: dict,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -48,7 +48,7 @@ def create_user(
 @router.post("/roles", status_code=201)
 def create_role(
     body: dict,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -64,7 +64,7 @@ def create_role(
 @router.post("/datasets", status_code=201)
 def create_dataset(
     body: dict,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -104,15 +104,26 @@ def create_dataset(
 @router.post("/grants", status_code=201)
 def create_grant(
     body: dict,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
     with ctx.session_factory() as session:
-        role = session.get(Role, body.get("role_id"))
         ds = session.get(Dataset, body.get("dataset_id"))
-        if role is None or ds is None:
-            raise HTTPException(status_code=400, detail="role/dataset not found")
+        if ds is None:
+            raise HTTPException(status_code=400, detail="dataset not found")
+        role = session.get(Role, body.get("role_id")) if body.get("role_id") else None
+        target_user = (
+            session.get(User, body.get("user_id")) if body.get("user_id") else None
+        )
+        if body.get("role_id") and role is None:
+            raise HTTPException(status_code=400, detail="role not found")
+        if body.get("user_id") and target_user is None:
+            raise HTTPException(status_code=400, detail="user not found")
+        if role is None and target_user is None:
+            raise HTTPException(
+                status_code=400, detail="role_id 与 user_id 必须提供一个"
+            )
         whitelist = body.get("field_whitelist")
         if whitelist is not None:
             bad = set(whitelist) - set(ds.columns)
@@ -124,28 +135,33 @@ def create_grant(
                 raise HTTPException(status_code=400, detail=f"规则字段不存在: {rule.get('field')}")
             if rule.get("op") not in _VALID_OPS:
                 raise HTTPException(status_code=400, detail=f"非法操作符: {rule.get('op')}")
-        existing = (
-            session.query(DatasetGrant)
-            .filter_by(role_id=role.id, dataset_id=ds.id)
-            .first()
+        dup_q = session.query(DatasetGrant).filter_by(dataset_id=ds.id)
+        dup_q = (
+            dup_q.filter_by(role_id=role.id)
+            if role is not None
+            else dup_q.filter_by(user_id=target_user.id)
         )
-        if existing:
+        if dup_q.first():
             raise HTTPException(status_code=409, detail="grant exists")
         grant = DatasetGrant(
-            role_id=role.id,
+            role_id=role.id if role is not None else None,
+            user_id=target_user.id if target_user is not None else None,
             dataset_id=ds.id,
             row_rules=rules,
             field_whitelist=whitelist,
         )
         session.add(grant)
         session.commit()
-        return {"id": grant.id}
+        return {
+            "id": grant.id,
+            "target": ("role:" + role.name) if role else ("user:" + target_user.username),
+        }
 
 
 @router.post("/api-keys", status_code=201)
 def create_api_key(
     body: dict,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -168,7 +184,7 @@ def create_api_key(
 @router.post("/api-keys/{key_id_num}/revoke")
 def revoke_api_key(
     key_id_num: int,
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -184,7 +200,7 @@ def revoke_api_key(
 @router.get("/audit-logs")
 def list_audit_logs(
     limit: int = Query(50, le=200),
-    principal: Principal = Depends(get_principal),
+    principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
     _require_admin(principal)
@@ -205,3 +221,48 @@ def list_audit_logs(
             }
             for a in rows
         ]
+
+
+@router.get("/grants")
+def list_grants(
+    dataset_id: int = Query(...),
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    _require_admin(principal)
+    with ctx.session_factory() as session:
+        rows = (
+            session.query(DatasetGrant)
+            .filter_by(dataset_id=dataset_id)
+            .order_by(DatasetGrant.id)
+            .all()
+        )
+        result = []
+        for g in rows:
+            role = session.get(Role, g.role_id) if g.role_id else None
+            user = session.get(User, g.user_id) if g.user_id else None
+            result.append(
+                {
+                    "id": g.id,
+                    "target": ("role:" + role.name) if role else ("user:" + user.username),
+                    "row_rules": g.row_rules,
+                    "field_whitelist": g.field_whitelist,
+                }
+            )
+        return result
+
+
+@router.delete("/grants/{grant_id}")
+def delete_grant(
+    grant_id: int,
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    _require_admin(principal)
+    with ctx.session_factory() as session:
+        g = session.get(DatasetGrant, grant_id)
+        if g is None:
+            raise HTTPException(status_code=404, detail="grant not found")
+        session.delete(g)
+        session.commit()
+        return {"deleted": grant_id}

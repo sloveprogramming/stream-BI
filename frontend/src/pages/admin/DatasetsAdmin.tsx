@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Checkbox, Form, Input, Modal, Select, Space, Table, message } from 'antd'
+import { Button, Card, Checkbox, Divider, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, message } from 'antd'
 import http from '../../api/http'
 
 const OPS = ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like']
@@ -10,9 +10,13 @@ const OP_LABEL: Record<string, string> = {
 export default function DatasetsAdmin() {
   const [datasets, setDatasets] = useState<any[]>([])
   const [roles, setRoles] = useState<any[]>([])
+  const [users, setUsers] = useState<any[]>([])
   const [dsOpen, setDsOpen] = useState(false)
   const [grantOpen, setGrantOpen] = useState(false)
   const [grantTarget, setGrantTarget] = useState<any>(null)
+  const [grantsList, setGrantsList] = useState<any[]>([])
+  const [targetType, setTargetType] = useState<'role' | 'user'>('role')
+  const [targetId, setTargetId] = useState<number | undefined>()
   const [whitelist, setWhitelist] = useState<string[]>([])
   const [rules, setRules] = useState<any[]>([])
   const [form] = Form.useForm()
@@ -23,6 +27,7 @@ export default function DatasetsAdmin() {
   const load = () => {
     http.get('/admin/datasets').then((r) => setDatasets(r.data))
     http.get('/admin/roles').then((r) => setRoles(r.data))
+    http.get('/admin/users').then((r) => setUsers(r.data))
   }
   useEffect(() => {
     load()
@@ -49,21 +54,43 @@ export default function DatasetsAdmin() {
     setGrantTarget(ds)
     setWhitelist(ds.columns)
     setRules([])
+    setTargetType('role')
+    setTargetId(undefined)
+    http.get('/admin/grants', { params: { dataset_id: ds.id } }).then((r) => setGrantsList(r.data))
     setGrantOpen(true)
   }
 
-  const saveGrant = async (roleId: number) => {
+  const saveGrant = async () => {
+    if (!targetId) {
+      message.warning('请先选择授权对象')
+      return
+    }
     try {
-      await http.post('/admin/grants', {
-        role_id: roleId,
+      const payload: any = {
         dataset_id: grantTarget.id,
         row_rules: rules.filter((r) => r.field && r.value !== undefined),
         field_whitelist: whitelist.length ? whitelist : null,
-      })
+      }
+      if (targetType === 'role') payload.role_id = targetId
+      else payload.user_id = targetId
+      await http.post('/admin/grants', payload)
       message.success('授权已保存')
-      setGrantOpen(false)
+      http.get('/admin/grants', { params: { dataset_id: grantTarget.id } }).then((r) => setGrantsList(r.data))
+      setWhitelist(grantTarget.columns)
+      setRules([])
+      setTargetId(undefined)
     } catch (e: any) {
       message.error(e.response?.data?.detail || '保存失败')
+    }
+  }
+
+  const removeGrant = async (id: number) => {
+    try {
+      await http.delete(`/admin/grants/${id}`)
+      message.success('授权已删除')
+      setGrantsList(grantsList.filter((g) => g.id !== id))
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '删除失败')
     }
   }
 
@@ -88,7 +115,7 @@ export default function DatasetsAdmin() {
             title: '操作',
             render: (_, r) => (
               <Button size="small" onClick={() => openGrant(r)}>
-                配置角色授权
+                管理授权
               </Button>
             ),
           },
@@ -138,68 +165,120 @@ export default function DatasetsAdmin() {
       </Modal>
       <Modal
         open={grantOpen}
-        title={`授权配置：${grantTarget?.name || ''}`}
+        title={`授权管理：${grantTarget?.name || ''}`}
         footer={null}
         onCancel={() => setGrantOpen(false)}
-        width={720}
+        width={780}
       >
-        <p>选择角色：</p>
+        <p>当前授权（{grantsList.length} 条）：</p>
+        <Table
+          size="small"
+          rowKey="id"
+          dataSource={grantsList}
+          pagination={false}
+          columns={[
+            {
+              title: '授权对象',
+              dataIndex: 'target',
+              render: (t: string) =>
+                t.startsWith('user:') ? <Tag color="blue">{t.replace('user:', '用户：')}</Tag> : <Tag color="green">{t.replace('role:', '角色：')}</Tag>,
+            },
+            {
+              title: '可见字段',
+              dataIndex: 'field_whitelist',
+              render: (f: string[] | null) => (f ? f.join('、') : '全部字段'),
+            },
+            {
+              title: '行级规则',
+              dataIndex: 'row_rules',
+              render: (rules: any[]) => (rules?.length ? `${rules.length} 条` : '不限'),
+            },
+            {
+              title: '操作',
+              render: (_, g) => (
+                <Popconfirm title="确认删除该授权？" onConfirm={() => removeGrant(g.id)}>
+                  <Button danger size="small">删除</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+        <Divider />
+        <p>新增授权：</p>
         <Space direction="vertical" style={{ width: '100%' }}>
-          {roles.map((role) => (
-            <Card key={role.id} size="small" title={role.name}>
-              <p>字段白名单（不勾选 = 全部字段）：</p>
-              <Checkbox.Group
-                value={whitelist}
-                onChange={(v) => setWhitelist(v as string[])}
-                options={grantTarget?.columns || []}
-              />
-              <p style={{ marginTop: 12 }}>行级过滤规则（全部为 AND）：</p>
-              {rules.map((rule, i) => (
-                <Space key={i} style={{ marginBottom: 4 }}>
-                  <Select
-                    style={{ width: 130 }}
-                    placeholder="字段"
-                    value={rule.field}
-                    onChange={(v) => setRules(rules.map((r, j) => (j === i ? { ...r, field: v } : r)))}
-                    options={(grantTarget?.columns || []).map((c: string) => ({ value: c, label: c }))}
-                  />
-                  <Select
-                    style={{ width: 110 }}
-                    value={rule.op}
-                    onChange={(v) => setRules(rules.map((r, j) => (j === i ? { ...r, op: v } : r)))}
-                    options={OPS.map((o) => ({ value: o, label: OP_LABEL[o] }))}
-                  />
-                  <Input
-                    style={{ width: 160 }}
-                    placeholder="值"
-                    value={rule.value}
-                    onChange={(e) =>
-                      setRules(rules.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
-                    }
-                  />
-                  <Button danger size="small" onClick={() => setRules(rules.filter((_, j) => j !== i))}>
-                    删除
-                  </Button>
-                </Space>
-              ))}
-              <div style={{ marginTop: 8 }}>
-                <Button
-                  size="small"
-                  onClick={() => setRules([...rules, { field: undefined, op: 'eq', value: '' }])}
-                >
-                  添加规则
+          <Space>
+            <Radio.Group
+              value={targetType}
+              onChange={(e) => {
+                setTargetType(e.target.value)
+                setTargetId(undefined)
+              }}
+              options={[
+                { value: 'role', label: '按角色授权' },
+                { value: 'user', label: '按账号授权' },
+              ]}
+              optionType="button"
+            />
+            <Select
+              style={{ width: 220 }}
+              placeholder={targetType === 'role' ? '选择角色' : '选择账号'}
+              value={targetId}
+              onChange={(v) => setTargetId(v)}
+              options={(targetType === 'role' ? roles : users).map((x) => ({
+                value: x.id,
+                label: targetType === 'role' ? `${x.name}（${x.description || '无描述'}）` : `${x.username}（${x.display_name || '无' }）`,
+              }))}
+              showSearch
+              optionFilterProp="label"
+            />
+          </Space>
+          <div>
+            <p>字段白名单（不勾选 = 全部字段）：</p>
+            <Checkbox.Group
+              value={whitelist}
+              onChange={(v) => setWhitelist(v as string[])}
+              options={grantTarget?.columns || []}
+            />
+          </div>
+          <div>
+            <p>行级过滤规则（全部为 AND 关系）：</p>
+            {rules.map((rule, i) => (
+              <Space key={i} style={{ marginBottom: 4 }}>
+                <Select
+                  style={{ width: 130 }}
+                  placeholder="字段"
+                  value={rule.field}
+                  onChange={(v) => setRules(rules.map((r, j) => (j === i ? { ...r, field: v } : r)))}
+                  options={(grantTarget?.columns || []).map((c: string) => ({ value: c, label: c }))}
+                />
+                <Select
+                  style={{ width: 110 }}
+                  value={rule.op}
+                  onChange={(v) => setRules(rules.map((r, j) => (j === i ? { ...r, op: v } : r)))}
+                  options={OPS.map((o) => ({ value: o, label: OP_LABEL[o] }))}
+                />
+                <Input
+                  style={{ width: 160 }}
+                  placeholder="值"
+                  value={rule.value}
+                  onChange={(e) =>
+                    setRules(rules.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
+                  }
+                />
+                <Button danger size="small" onClick={() => setRules(rules.filter((_, j) => j !== i))}>
+                  删除
                 </Button>
-                <Button
-                  type="primary"
-                  size="small"
-                  style={{ marginLeft: 8 }}
-                  onClick={() => saveGrant(role.id)}
-                >
-                  保存此角色授权
-                </Button>
-              </div>
-            </Card>
-          ))}
+              </Space>
+            ))}
+            <Space style={{ marginTop: 8 }}>
+              <Button size="small" onClick={() => setRules([...rules, { field: undefined, op: 'eq', value: '' }])}>
+                添加规则
+              </Button>
+              <Button type="primary" onClick={saveGrant}>
+                保存授权
+              </Button>
+            </Space>
+          </div>
         </Space>
       </Modal>
     </Card>

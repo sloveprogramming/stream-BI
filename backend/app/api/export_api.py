@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from app.access.grants import get_effective_grant
 from app.access.scoped_query import build_scoped_sql
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.models import AuditLog, Dataset, DatasetGrant
@@ -14,18 +15,8 @@ from app.settings import get_settings
 router = APIRouter(prefix="/datasets", tags=["export"])
 
 
-def _grant_for(session, principal: AnyPrincipal, ds: Dataset) -> DatasetGrant:
-    if principal.user.role_id is None:
-        raise HTTPException(status_code=403, detail="no grant")
-    grant = (
-        session.query(DatasetGrant)
-        .filter_by(role_id=principal.user.role_id, dataset_id=ds.id)
-        .first()
-    )
-    if grant is None:
-        raise HTTPException(status_code=403, detail="no grant")
-    return grant
-
+def _grant_for(session, principal: AnyPrincipal, ds: Dataset):
+    return get_effective_grant(session, principal.user, ds.id)
 
 @router.get("/{name}/export")
 def export_rows(
@@ -43,6 +34,8 @@ def export_rows(
         if ds is None:
             raise HTTPException(status_code=404, detail="dataset not found")
         grant = _grant_for(session, principal, ds)
+        if grant is None:
+            raise HTTPException(status_code=403, detail="no grant")
         sql, params = build_scoped_sql(ds, grant, {}, max_rows, 0)
         with ctx.pg_engine.connect() as conn:
             result = conn.execute(text(sql), params)
@@ -92,4 +85,3 @@ def export_rows(
             media_type=media,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-

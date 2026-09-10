@@ -45,10 +45,10 @@ class Dataset(Base):
 
 class DatasetGrant(Base):
     __tablename__ = "dataset_grants"
-    __table_args__ = (UniqueConstraint("role_id", "dataset_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
+    role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"))
     row_rules: Mapped[list] = mapped_column(JSON, default=list)
     field_whitelist: Mapped[list | None] = mapped_column(JSON)  # None=全部字段
