@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     discovery_enabled: bool = True
     discovery_interval_seconds: int = 10
     discovery_schema: str = "ods"
+    # ERP 自动同步：定时扫描 ERP 库的新表，自动创建同步任务（拉进 ods 后再由上面那步上架）
+    erp_autosync_enabled: bool = True
+    erp_autosync_interval_seconds: int = 300
+    erp_autosync_cron: str = "*/30 * * * *"
+    erp_autosync_include: str = ""  # 逗号分隔 glob，空 = 全部表
+    erp_autosync_exclude: str = ""  # 逗号分隔 glob，优先于 include
+    erp_autosync_max_tables: int = 100  # 安全阀：单次最多自动创建多少个任务
+    erp_autosync_run_now: bool = True  # 新建任务后立即跑一次，不等 cron
 
 
 @lru_cache

@@ -13,9 +13,10 @@ async def lifespan(app: FastAPI):
     from apscheduler.triggers.interval import IntervalTrigger
 
     from app.db import make_engine, make_session_factory
-    from app.scheduler import refresh_jobs
+    from app.scheduler import execute_task, refresh_jobs
     from app.settings import get_settings
     from app.sync.discovery import discover_datasets
+    from app.sync.erp_autosync import discover_sync_tasks
     from app.sync.puller import make_erp_engine
 
     logger = logging.getLogger("app.main")
@@ -54,6 +55,47 @@ async def lifespan(app: FastAPI):
             _discovery_job,
             IntervalTrigger(seconds=settings.discovery_interval_seconds),
             id="dataset_discovery",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+    # ERP 侧自动同步：扫描 ERP 新表 → 自动建同步任务 → 装载 cron → 需要时立即拉一次
+    # 数据落到 ods 后，再由上面的 _discovery_job 上架为数据集
+    if settings.erp_autosync_enabled:
+        from datetime import datetime, timedelta, timezone
+
+        from apscheduler.triggers.date import DateTrigger
+
+        def _erp_autosync_job() -> None:
+            try:
+                result = discover_sync_tasks(erp_engine, session_factory, settings)
+            except Exception:  # noqa: BLE001 —— ERP 不可达等，不影响其他任务
+                logger.exception("ERP 自动同步扫描失败")
+                return
+            if not result["created"]:
+                return
+            refresh_jobs(scheduler, session_factory)  # 让新任务进入 cron 调度
+            if not settings.erp_autosync_run_now:
+                return
+            # 用一次性任务在调度器线程里立刻拉一次，避免阻塞启动/扫描线程
+            for item in result["created"]:
+                scheduler.add_job(
+                    execute_task,
+                    DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=2)),
+                    args=[item["id"], "auto"],
+                    id=f"autosync_first_{item['id']}",
+                    replace_existing=True,
+                )
+
+        try:
+            _erp_autosync_job()
+        except Exception:  # noqa: BLE001
+            logger.exception("启动时 ERP 自动同步扫描失败")
+        scheduler.add_job(
+            _erp_autosync_job,
+            IntervalTrigger(seconds=settings.erp_autosync_interval_seconds),
+            id="erp_autosync",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

@@ -126,6 +126,42 @@ def delete_user(
     }
 
 
+@router.post("/sync/discover")
+def discover_erp_tables(
+    request: Request,
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    """手动触发一次 ERP 表扫描：为新表自动创建同步任务并立即拉一次。"""
+    _require_admin(principal)
+    from app.sync.erp_autosync import discover_sync_tasks
+
+    result = discover_sync_tasks(ctx.erp_engine, ctx.session_factory, ctx.settings)
+    if result["created"]:
+        from datetime import datetime, timedelta, timezone
+
+        from apscheduler.triggers.date import DateTrigger
+
+        from app.scheduler import execute_task, refresh_jobs
+
+        try:
+            scheduler = request.app.state.scheduler
+            refresh_jobs(scheduler, ctx.session_factory)
+            for item in result["created"]:
+                scheduler.add_job(
+                    execute_task,
+                    DateTrigger(
+                        run_date=datetime.now(timezone.utc) + timedelta(seconds=1)
+                    ),
+                    args=[item["id"], "auto"],
+                    id=f"autosync_first_{item['id']}",
+                    replace_existing=True,
+                )
+        except Exception:  # noqa: BLE001 —— 任务已建好，调度装载失败不致命
+            pass
+    return result
+
+
 @router.post("/roles", status_code=201)
 def create_role(
     body: dict,
