@@ -43,12 +43,26 @@ export default function SyncTasks() {
   const scanErp = async () => {
     try {
       const { data } = await http.post('/admin/sync/discover')
-      const n = data.created?.length || 0
-      message.success(
-        n
-          ? `扫描完成，新建 ${n} 个同步任务：${data.created.map((c: any) => c.source_table).join('、')}`
-          : `扫描完成，${data.erp_tables} 张表均已配置`,
-      )
+      const created = data.created?.length || 0
+      const evolved = data.evolved?.length || 0
+      const parts: string[] = []
+      if (created) {
+        parts.push(`新表 ${created} 个：${data.created.map((c: any) => c.source_table).join('、')}`)
+      }
+      if (evolved) {
+        parts.push(
+          `补字段 ${evolved} 张：${data.evolved
+            .map((e: any) => `${e.table}(+${e.added.join('/')})`)
+            .join('、')}`,
+        )
+      }
+      message.success(parts.length ? `扫描完成，${parts.join('；')}` : `扫描完成，${data.erp_tables} 张表均已同步`)
+      if (data.skipped_no_pk?.length) {
+        message.warning(`以下 ERP 表无主键被跳过：${data.skipped_no_pk.join('、')}`)
+      }
+      if (data.warnings?.length) {
+        message.warning(`告警：${data.warnings.join('；')}`)
+      }
       load()
     } catch (e: any) {
       message.error(e.response?.data?.detail || '扫描失败（ERP 可能不可达）')
@@ -67,9 +81,9 @@ export default function SyncTasks() {
           <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => load()}>
             刷新
           </Button>
-          <Tooltip title="扫描 ERP 库里还没有同步任务的新表，自动建任务并立即拉一次">
+          <Tooltip title="扫描 ERP：新表自动建同步任务、已有表新增的字段自动补到 ods 与数据集，并立即拉一次">
             <Button size="small" type="primary" icon={<ThunderboltOutlined />} onClick={scanErp}>
-              扫描 ERP 新表
+              扫描 ERP（新表 / 新字段）
             </Button>
           </Tooltip>
         </Space>

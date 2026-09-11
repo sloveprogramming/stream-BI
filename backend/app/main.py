@@ -60,33 +60,46 @@ async def lifespan(app: FastAPI):
             coalesce=True,
         )
 
-    # ERP 侧自动同步：扫描 ERP 新表 → 自动建同步任务 → 装载 cron → 需要时立即拉一次
+    # ERP 侧维护：① 结构演进（给已有任务补新字段）② 发现新表并建任务
     # 数据落到 ods 后，再由上面的 _discovery_job 上架为数据集
     if settings.erp_autosync_enabled:
         from datetime import datetime, timedelta, timezone
 
         from apscheduler.triggers.date import DateTrigger
 
+        from app.sync.evolution import evolve_sync_schemas
+
+        def _run_soon(task_id: int) -> None:
+            """用一次性任务在调度器线程里立刻拉一次，避免阻塞启动/扫描线程。"""
+            scheduler.add_job(
+                execute_task,
+                DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=2)),
+                args=[task_id, "auto"],
+                id=f"autosync_first_{task_id}",
+                replace_existing=True,
+            )
+
         def _erp_autosync_job() -> None:
+            touched: list[int] = []
+            try:
+                evolved = evolve_sync_schemas(
+                    erp_engine, pg_engine, session_factory, settings.discovery_schema
+                )
+                touched += [item["task_id"] for item in evolved["evolved"]]
+            except Exception:  # noqa: BLE001 —— ERP 不可达等，不影响其他任务
+                logger.exception("ERP 结构演进失败")
             try:
                 result = discover_sync_tasks(erp_engine, session_factory, settings)
-            except Exception:  # noqa: BLE001 —— ERP 不可达等，不影响其他任务
+            except Exception:  # noqa: BLE001
                 logger.exception("ERP 自动同步扫描失败")
+                result = {"created": []}
+            if result["created"]:
+                refresh_jobs(scheduler, session_factory)  # 让新任务进入 cron 调度
+                touched += [item["id"] for item in result["created"]]
+            if not touched or not settings.erp_autosync_run_now:
                 return
-            if not result["created"]:
-                return
-            refresh_jobs(scheduler, session_factory)  # 让新任务进入 cron 调度
-            if not settings.erp_autosync_run_now:
-                return
-            # 用一次性任务在调度器线程里立刻拉一次，避免阻塞启动/扫描线程
-            for item in result["created"]:
-                scheduler.add_job(
-                    execute_task,
-                    DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=2)),
-                    args=[item["id"], "auto"],
-                    id=f"autosync_first_{item['id']}",
-                    replace_existing=True,
-                )
+            for task_id in dict.fromkeys(touched):  # 去重且保序
+                _run_soon(task_id)
 
         try:
             _erp_autosync_job()

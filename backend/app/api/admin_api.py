@@ -132,12 +132,20 @@ def discover_erp_tables(
     principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
-    """手动触发一次 ERP 表扫描：为新表自动创建同步任务并立即拉一次。"""
+    """手动触发一次 ERP 维护：补齐已有任务的新字段 + 为新表建同步任务，并立即拉一次。"""
     _require_admin(principal)
     from app.sync.erp_autosync import discover_sync_tasks
+    from app.sync.evolution import evolve_sync_schemas
 
+    evolved = evolve_sync_schemas(
+        ctx.erp_engine, ctx.pg_engine, ctx.session_factory, ctx.settings.discovery_schema
+    )
     result = discover_sync_tasks(ctx.erp_engine, ctx.session_factory, ctx.settings)
-    if result["created"]:
+
+    task_ids = [item["task_id"] for item in evolved["evolved"]] + [
+        item["id"] for item in result["created"]
+    ]
+    if task_ids:
         from datetime import datetime, timedelta, timezone
 
         from apscheduler.triggers.date import DateTrigger
@@ -147,19 +155,28 @@ def discover_erp_tables(
         try:
             scheduler = request.app.state.scheduler
             refresh_jobs(scheduler, ctx.session_factory)
-            for item in result["created"]:
+            for task_id in dict.fromkeys(task_ids):
                 scheduler.add_job(
                     execute_task,
                     DateTrigger(
                         run_date=datetime.now(timezone.utc) + timedelta(seconds=1)
                     ),
-                    args=[item["id"], "auto"],
-                    id=f"autosync_first_{item['id']}",
+                    args=[task_id, "auto"],
+                    id=f"autosync_first_{task_id}",
                     replace_existing=True,
                 )
         except Exception:  # noqa: BLE001 —— 任务已建好，调度装载失败不致命
             pass
-    return result
+
+    return {
+        "database": result["database"],
+        "erp_tables": result["erp_tables"],
+        "created": result["created"],
+        "skipped_no_pk": result["skipped_no_pk"],
+        "capped": result["capped"],
+        "evolved": evolved["evolved"],
+        "warnings": evolved["warnings"],
+    }
 
 
 @router.post("/roles", status_code=201)
