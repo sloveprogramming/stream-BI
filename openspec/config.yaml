@@ -1,0 +1,65 @@
+schema: spec-driven
+
+context: |
+  Language: chinese
+  All artifacts must be written in chinese.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  ## 项目
+  BIsql 数据中台：为企业 ERP 数据构建统一权限分发中台，
+  让业务人员与大模型 Agent 在**同一套权限口径**下安全取数。
+  服务对象：PMC、运营、销售、采购等业务人员，以及内部 AI Agent。
+
+  ## 代码位置
+  - 后端：backend/app/（FastAPI）
+  - 前端：frontend/src/（React 19 + TypeScript + Vite + antd 6 + React Flow + Zustand）
+  - dbt 项目：backend/dbt/（编排生成的 model 落在 models/generated/，请勿手改）
+  - 设计文档：docs/
+  - 测试：cd backend && python -m pytest -q
+
+  ## 已定技术栈（2026 主流，不要替换）
+  - 后端：FastAPI + Pydantic v2 + SQLAlchemy 2.0 + Alembic + PostgreSQL 16
+  - Agent：LangGraph；LLM：DeepSeek（chat 生成 / reasoner 规划）
+  - 数据编排：算子库 → 编译成 dbt model → dbt-core + dbt-postgres 执行
+  - AI 算子：LLM 节点不产 SQL，由 Python 执行并物化结果表，供下游 dbt JOIN
+  - MCP：MCP Python SDK
+  - 明确不引入：Spark / Flink / Kafka / K8s / Airflow / Milvus / OpenMetadata / Iceberg
+
+  ## 既有硬约束（改动前必须遵守）
+  1. 新增任何查询路径必须用 `resolve_grant`（带管理员兜底），
+     不要用 `get_effective_grant`，否则管理员会 403。
+  2. 取数只有一条路：`app/assistant/tools.py` 的 `run_scoped_sql` / `fetch_scoped_rows`。
+     不要在别处手拼 SELECT。
+  3. 标识符必须过 `access/scoped_query.py::check_ident`；值一律参数化。
+  4. 物理列名保持 ASCII；中文展示名填数据集的字段注释（`datasets.column_comments`）。
+  5. 新增模型必须配 alembic 迁移，并在 `app/models/__init__.py` 导出。
+  6. 编排读源必须过同一套裁剪器；产物继承来源的行级规则；
+     规则字段在产物里缺失时禁止分享（强制 owner-only）。
+  7. 权限失败必须中止（aborted），不允许降级成「不过滤继续跑」。
+
+rules:
+  proposal:
+    - 必须写明「不做什么」（out of scope）—— 本项目最大的风险是过度设计
+    - 必须说明是否触及权限边界；触及就要单列一节讲清如何不破坏「同一问题、同一权限、同一结果」
+    - 明确列出「不引入什么新依赖」，能复用现有依赖就不引新的
+  specs:
+    - 用 Given/When/Then 写场景，每个场景必须可测（能在 pytest 或构建里验证）
+    - 涉及权限的能力，至少有一个「越权必须被拒绝」的反向场景
+    - 不要把实现细节（表名、函数名）写进 Requirement；规格是行为契约
+  design:
+    - 必须列出复用的现有模块（文件路径 + 函数名）—— 本项目强调「只加不换」
+    - 引入新依赖必须说明为什么现有依赖不够
+  tasks:
+    - 每个任务完成后必须能跑出可验证结果（测试通过 / 构建通过 / 接口可调）
+    - 任务粒度按「一次能验证完」切，不要按文件切
+
+operations:
+  apply:
+    guidance:
+      - 每完成一个任务就跑一次相关测试，不要攒到最后
+      - 改数据库结构必须同时写 alembic 迁移；改完跑 alembic check 确认无差异
+      - 沙箱内删文件要用 Python 的 os.remove（Remove-Item 会被 safe-delete 拦截）
+  archive:
+    guidance:
+      - 归档前确认全量 pytest 通过且 alembic check 无差异
+      - 归档时把「实际与计划不一致的地方」写进归档说明

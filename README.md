@@ -49,6 +49,30 @@ frontend/            React + TypeScript 管理台
 cd backend && python -m pytest -v
 ```
 
+## 规格驱动开发（OpenSpec）
+
+本项目用 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 管理规格：
+
+| 位置 | 含义 |
+|---|---|
+| `openspec/specs/<能力>/spec.md` | 系统**当前**的行为契约（Requirement + Scenario） |
+| `openspec/changes/<变更>/` | 进行中的变更提案（proposal / specs 增量 / design / tasks） |
+| `openspec/config.yaml` | 项目上下文与各工件的书写规则 |
+
+```bash
+npx @fission-ai/openspec@latest list             # 看有哪些进行中的变更与任务进度
+npx @fission-ai/openspec@latest show <变更名>     # 看某个变更的详情
+npx @fission-ai/openspec@latest validate --all   # 校验规格格式
+npx @fission-ai/openspec@latest archive <变更名>  # 归档：把增量规格合并进主规格
+```
+
+**核心约定**：`specs` 描述系统**现在**是什么样，`changes` 描述**接下来**要改成什么样。
+一次变更只做一件事，做完归档，规格随之增量增长——而不是维护一份越写越乱的大文档。
+
+改代码前先看 `openspec/specs/` 里对应能力的契约；有行为变化就先提 change，
+再按 `tasks.md` 逐项实现。
+
+
 ## 数据编排冒烟
 
 一条命令用真 dbt 跑完整链路（建流程 → 编译 → 物化 → 注册数据集 → 验证行级权限）：
