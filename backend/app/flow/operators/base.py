@@ -45,7 +45,19 @@ class Operator(ABC):
     def compile_sql(self, ctx: "CompileCtx", node: "FlowNode") -> str:
         raise NotImplementedError(f"算子 {self.type} 是 Python 算子，不支持 SQL 编译")
 
-    def run_python(self, ctx: "CompileCtx", node: "FlowNode", frames: dict):
+    def run_python(
+        self,
+        *,
+        node: "FlowNode",
+        columns: list[str],
+        rows: list[list],
+        session=None,
+    ) -> tuple[list[str], list[list]]:
+        """Python 算子的执行入口：吃上游的 (列名, 行)，吐出要物化的 (列名, 行)。
+
+        为什么不给它数据库连接：AI 算子只需要"数据 + 模型"，不需要自己取数。
+        取数由执行器统一走权限裁剪器，算子这一层拿不到绕过权限的手段。
+        """
         raise NotImplementedError(f"算子 {self.type} 是 SQL 算子，不支持 Python 执行")
 
     def output_columns(

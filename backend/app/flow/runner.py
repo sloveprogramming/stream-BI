@@ -23,10 +23,13 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from app.flow.compile import CompiledFlow, compile_flow
-from app.flow.dsl import FlowDSL
+from app.flow.compile import CompiledFlow, compile_flow, compile_select_for
+from app.flow.dsl import FlowDSL, FlowNode, topological_order
 from app.flow.errors import FlowError, FlowExecutionError, FlowPermissionError
+from app.flow.operators import get_operator
 from app.flow.service import get_version, _resolve_owner
+from app.flow.sqlutil import check_ident, sanitize_ident
+from app.assistant.tools import execute_readonly
 from app.models import (
     Dataset,
     DatasetGrant,
@@ -143,6 +146,102 @@ def _introspect_columns(pg_engine, qualified_table: str) -> list[str]:
     return columns
 
 
+# ---------- AI 算子的预跑与物化 ----------
+
+
+def _infer_pg_type(values: list) -> str:
+    """按第一个非空值推断列类型。
+
+    AI 算子的输出表由我们建，但**不是所有列都是文本** ——
+    上游的 id / 金额要沿用原类型，否则下游 JOIN 会因为 text vs bigint 失败。
+    """
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, int):
+            return "bigint"
+        if isinstance(value, (float,)):
+            return "numeric"
+        from decimal import Decimal
+
+        if isinstance(value, Decimal):
+            return "numeric"
+        return "text"
+    return "text"
+
+
+def _write_table(pg_engine, qualified_table: str, columns: list[str], rows: list[list]) -> None:
+    schema, name = qualified_table.split(".", 1)
+    check_ident(schema)
+    check_ident(name)
+    ddl = ", ".join(
+        f'"{check_ident(c)}" {_infer_pg_type([r[i] for r in rows])}'
+        for i, c in enumerate(columns)
+    )
+    with pg_engine.begin() as conn:
+        conn.execute(text(f'DROP TABLE IF EXISTS "{schema}"."{name}"'))
+        conn.execute(text(f'CREATE TABLE "{schema}"."{name}" ({ddl})'))
+        if rows:
+            holders = ", ".join(f":c{i}" for i in range(len(columns)))
+            payload = [{f"c{i}": v for i, v in enumerate(row)} for row in rows]
+            conn.execute(
+                text(f'INSERT INTO "{schema}"."{name}" VALUES ({holders})'), payload
+            )
+
+
+def run_ai_nodes(session, dsl: FlowDSL, *, owner, pg_engine, settings) -> dict[str, str]:
+    """先把 AI 节点跑完并物化，再把物化表名写回节点参数。
+
+    为什么必须先跑：AI 算子不产 SQL，下游 dbt 模型只能引用它的**结果表**。
+    取数走 `compile_select_for`（内部经权限裁剪器），所以喂给模型的只有该用户
+    有权看到的数据 —— 这一点很关键，不能让模型成为越权读数的通道。
+    """
+    ai_nodes = [
+        node
+        for node in topological_order(dsl.nodes, dsl.edges)
+        if get_operator(node.type).engine == "python"
+    ]
+    produced: dict[str, str] = {}
+    if not ai_nodes:
+        return produced
+
+    schema = settings.flow_ai_schema
+    check_ident(schema)
+    with pg_engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+
+    for node in ai_nodes:
+        op = get_operator(node.type)
+        # 权限已内联在这条 SELECT 里
+        sql = compile_select_for(dsl, node.id, session=session, owner=owner)
+        columns, rows = execute_readonly(
+            pg_engine,
+            sql,
+            {},
+            settings.flow_ai_max_rows,
+            settings.flow_ai_timeout_seconds,
+        )
+        if len(rows) >= settings.flow_ai_max_rows:
+            raise FlowExecutionError(
+                f"AI 算子 {node.id}（{node.type}）的输入达到上限 "
+                f"{settings.flow_ai_max_rows} 行，已中止。"
+                f"请先在上游过滤/聚合，或调大 BISQL_FLOW_AI_MAX_ROWS。"
+                f"（不允许截断处理：那会产出一张不完整的标签表）"
+            )
+
+        out_columns, out_rows = op.run_python(
+            node=node, columns=columns, rows=rows, session=session
+        )
+        table = f"{schema}.{sanitize_ident(f'{dsl.name}_{node.id}')}"
+        _write_table(pg_engine, table, out_columns, out_rows)
+        # 写回参数：下游编译时 external_source() 靠它找到这张表
+        node.params = {**(node.params or {}), "materialized_table": table}
+        produced[node.id] = table
+    return produced
+
+
 # ---------- 产物注册与授权继承 ----------
 
 
@@ -254,6 +353,12 @@ def run_flow(
     started = time.perf_counter()
     meta: dict = {}
     try:
+        # AI 算子先跑并物化：它不产 SQL，下游 dbt 模型只能引用它的结果表。
+        # 取数同样走权限裁剪器，模型拿不到越权的行。
+        ai_tables = run_ai_nodes(session, dsl, owner=owner, pg_engine=pg_engine, settings=settings)
+        if ai_tables:
+            meta["ai_tables"] = ai_tables
+
         # 编译内含权限裁剪：owner 对源数据集没授权，这里就中止
         compiled = compile_flow(dsl, session=session, owner=owner)
         run.grant_snapshot = compiled.grant_snapshot

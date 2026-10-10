@@ -144,11 +144,42 @@ def validate_flow(dsl: FlowDSL) -> None:
         get_operator(node.type).parse(node)  # 未知算子 / 参数非法都会在这抛
 
 
-def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:
-    """把 DSL 编译成 dbt model。`owner` 决定源数据的行级与字段级口径。"""
-    order = topological_order(dsl.nodes, dsl.edges)
-    ctx = CompileCtx(dsl=dsl)
+def _ancestors(dsl: FlowDSL, node_id: str) -> set[str]:
+    """node_id 的全部上游（含间接），用于按需裁剪编译范围。"""
+    out: set[str] = set()
+    stack = list(dsl.upstream_ids(node_id))
+    while stack:
+        current = stack.pop()
+        if current in out:
+            continue
+        out.add(current)
+        stack.extend(dsl.upstream_ids(current))
+    return out
 
+
+@dataclass
+class _BuildResult:
+    ctx: CompileCtx
+    ctes: list[str]
+    used: list[str]
+    sources: dict[str, _SourceInfo]
+
+
+def _build_ctes(
+    dsl: FlowDSL, *, session, owner, upto: str | None = None
+) -> _BuildResult:
+    """按拓扑序把节点编译成 CTE 列表。
+
+    `upto` 指定时只编到该节点（含它的全部上游），用于 AI 算子取上游数据 ——
+    它需要的是"到这一步为止的结果"，不是整条流程。
+
+    `sources` 一并返回：授权快照必须和真正生成 SQL 的那一次解析是**同一份**，
+    否则审计记录里的行权口径可能和实际执行的 SQL 不一致。
+    """
+    order = topological_order(dsl.nodes, dsl.edges)
+    keep = {upto, *_ancestors(dsl, upto)} if upto is not None else None
+
+    ctx = CompileCtx(dsl=dsl)
     sources = _resolve_sources(dsl, session, owner)
     ctx.source_loader = lambda node: sources[node.id].scoped_sql
     for node_id, info in sources.items():
@@ -158,6 +189,8 @@ def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:
     ctes: list[str] = []
     used: list[str] = []
     for node in order:
+        if keep is not None and node.id not in keep:
+            continue
         op = get_operator(node.type)
         used.append(node.type)
 
@@ -174,6 +207,26 @@ def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:
                 ctx, node, _input_columns_for(ctx, dsl, node)
             )
         ctes.append(f"{ctx.cte(node.id)} AS (\n{_indent(sql)}\n    )")
+    return _BuildResult(ctx=ctx, ctes=ctes, used=used, sources=sources)
+
+
+def compile_select_for(dsl: FlowDSL, node_id: str, *, session, owner) -> str:
+    """编译出「到 node_id 为止」的一条 SELECT。
+
+    AI 算子靠它取上游数据：执行这条 SELECT 拿到行，喂给模型，
+    再把结果物化成表供下游 dbt 模型引用。权限同样由 `_resolve_sources` 套好，
+    所以 AI 算子也看不到自己没权限的行。
+    """
+    if node_id not in dsl.node_map():
+        raise FlowCompileError(f"节点不存在：{node_id}")
+    built = _build_ctes(dsl, session=session, owner=owner, upto=node_id)
+    return f"WITH {',\n'.join(built.ctes)}\nSELECT * FROM {built.ctx.cte(node_id)}\n"
+
+
+def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:
+    """把 DSL 编译成 dbt model。`owner` 决定源数据的行级与字段级口径。"""
+    built = _build_ctes(dsl, session=session, owner=owner)
+    ctx, ctes, used, sources = built.ctx, built.ctes, built.used, built.sources
 
     model_name = dsl.output.target_name
     target = f"{dsl.output.target_schema}.{model_name}"

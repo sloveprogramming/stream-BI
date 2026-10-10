@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     flow_generated_subdir: str = "models/generated"  # 画布生成的 model 落这里
     flow_max_nodes: int = 50  # 单条流程的节点数上限（防画布失控）
     flow_max_share_users: int = 20  # 一条流程产物最多额外授权给多少人
+    # AI 算子：中间结果落这个 schema；单次输入行数上限是成本安全阀
+    flow_ai_schema: str = "ai_tmp"
+    flow_ai_max_rows: int = 5000
+    flow_ai_timeout_seconds: int = 120
 
 
 @lru_cache

@@ -11,6 +11,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.models import (
+    AiLlmCache,
     AuditLog,
     DataFlow,
     DataFlowVersion,
@@ -79,7 +80,7 @@ def flow_env(pg_session_factory, pg_engine):
 
     # ---- 清理 ----
     with pg_engine.begin() as conn:
-        for schema in ("dwd", "dws", "ads"):
+        for schema in ("dwd", "dws", "ads", "ai_tmp"):
             rows = conn.execute(
                 sa.text(
                     "SELECT table_name FROM information_schema.tables "
@@ -111,6 +112,10 @@ def flow_env(pg_session_factory, pg_engine):
             synchronize_session=False
         )
         s.query(Dataset).filter(Dataset.id.in_(dataset_ids)).delete(synchronize_session=False)
+        # AI 缓存：测试里都把 suffix 塞进提示词，用模糊匹配回收自己的那几行
+        s.query(AiLlmCache).filter(AiLlmCache.cache_key.like(f"%{suffix}%")).delete(
+            synchronize_session=False
+        )
         s.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
         s.commit()
 

@@ -17,6 +17,7 @@ from app.flow.operators import field  # noqa: F401,E402
 from app.flow.operators import clean  # noqa: F401,E402
 from app.flow.operators import join  # noqa: F401,E402
 from app.flow.operators import agg  # noqa: F401,E402
+from app.flow.operators import ai  # noqa: F401,E402
 from app.flow.operators import sink  # noqa: F401,E402
 
 __all__ = ["REGISTRY", "Operator", "get_operator", "operator_catalog", "register"]
