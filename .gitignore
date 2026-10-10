@@ -1,13 +1,37 @@
+# ---- 密钥与环境 ----
 .env
+*.env.local
+
+# ---- Python ----
 __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
-frontend/dist/
 backend/.venv/
+
+# ---- Node ----
+node_modules/
+frontend/dist/
+
+# ---- 本地工作目录（含记忆/凭据，绝不入库） ----
+.workbuddy/
 .local/
 .superpowers/
+.idea/
+.vscode/
+*.log
+
+# ---- 导出与业务数据 ----
 backend/exports/
 /wdt_stockout_*.json
 
+# ---- dbt / dagster 运行产物 ----
+backend/dbt/target/
+backend/dbt/logs/
+backend/dbt/dbt_packages/
+backend/dbt/.user.yml
+.dagster_home/
+.dagster/
+
+# ---- 与本中台无关的独立子项目 ----
 旺店通 - 副本/

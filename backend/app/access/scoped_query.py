@@ -47,9 +47,13 @@ def build_count_sql(dataset, grant, filters: dict) -> tuple[str, dict]:
 
 
 def build_scoped_sql(
-    dataset, grant, filters: dict, limit: int, offset: int
+    dataset, grant, filters: dict, limit: int | None = None, offset: int = 0
 ) -> tuple[str, dict]:
-    """返回经权限裁剪的 SELECT 语句。字段=白名单；行=规则 AND 用户过滤；值全部参数化。"""
+    """返回经权限裁剪的 SELECT 语句。字段=白名单；行=规则 AND 用户过滤；值全部参数化。
+
+    `limit=None` 表示不限行数（供物化类场景使用，如数据编排落表）；
+    传整数时行为与既有调用完全一致，末尾追加 `LIMIT :limit OFFSET :offset`。
+    """
     columns = grant.field_whitelist or list(dataset.columns)
     for c in columns:
         check_ident(c)
@@ -65,7 +69,10 @@ def build_scoped_sql(
     if where:
         sql += " WHERE " + " AND ".join(where)
     order = ", ".join(_quote(c) for c in dataset.pk_columns)
-    sql += f" ORDER BY {order} LIMIT :limit OFFSET :offset"
-    params["limit"] = limit
-    params["offset"] = offset
+    if order:
+        sql += f" ORDER BY {order}"
+    if limit is not None:
+        sql += " LIMIT :limit OFFSET :offset"
+        params["limit"] = limit
+        params["offset"] = offset
     return sql, params
