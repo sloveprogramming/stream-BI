@@ -6,6 +6,8 @@ import DatasetQuery from './pages/DatasetQuery'
 import MyKeys from './pages/MyKeys'
 import MyReports from './pages/MyReports'
 import DataAssistant from './pages/DataAssistant'
+import FlowList from './pages/FlowList'
+import FlowDesigner from './pages/FlowDesigner'
 import AdminUsers from './pages/admin/Users'
 import AdminDatasets from './pages/admin/DatasetsAdmin'
 import AdminSync from './pages/admin/SyncTasks'
@@ -36,6 +38,8 @@ export default function App() {
         <Route path="my-keys" element={<MyKeys />} />
         <Route path="my-reports" element={<MyReports />} />
         <Route path="data-assistant" element={<DataAssistant />} />
+        <Route path="flows" element={<FlowList />} />
+        <Route path="flows/:id" element={<FlowDesigner />} />
         <Route path="admin/users" element={<RequireAuth admin><AdminUsers /></RequireAuth>} />
         <Route path="admin/datasets" element={<RequireAuth admin><AdminDatasets /></RequireAuth>} />
         <Route path="admin/sync" element={<RequireAuth admin><AdminSync /></RequireAuth>} />

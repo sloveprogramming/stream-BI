@@ -1,0 +1,117 @@
+.flow-canvas {
+  flex: 1;
+  height: 100%;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+}
+
+.flow-node {
+  min-width: 168px;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  font-size: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.flow-node.is-selected {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.15);
+}
+
+.flow-node.is-invalid {
+  border-color: #ff4d4f;
+  box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15);
+}
+
+/* 输入 / 输出 / AI 三类一眼可分 */
+.flow-node--source {
+  background: #f6ffed;
+  border-color: #b7eb8f;
+}
+
+.flow-node--sink {
+  background: #f0f5ff;
+  border-color: #adc6ff;
+}
+
+.flow-node--python {
+  background: #f9f0ff;
+  border-color: #d3adf7;
+}
+
+.flow-node__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.flow-node__badge {
+  flex: none;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #722ed1;
+  color: #fff;
+}
+
+.flow-node__sub {
+  margin-top: 4px;
+  color: #8c8c8c;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.flow-handle {
+  width: 8px;
+  height: 8px;
+  background: #bfbfbf;
+  border: 1px solid #fff;
+}
+
+.flow-panel {
+  width: 260px;
+  border-right: 1px solid #f0f0f0;
+  padding: 12px;
+  overflow: auto;
+  background: #fff;
+}
+
+.flow-operator-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  cursor: grab;
+  background: #fff;
+  font-size: 12px;
+}
+
+.flow-operator-item:hover {
+  border-color: #1677ff;
+  background: #f0f7ff;
+}
+
+.flow-operator-item__desc {
+  color: #8c8c8c;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.flow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}

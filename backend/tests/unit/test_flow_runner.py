@@ -249,3 +249,39 @@ def test_generated_files_land_in_generated_dir(flow_env, load_user):
     for p in paths:
         assert generated_dir in Path(p).parents
         assert f"flowt_{env['suffix']}" in Path(p).name
+
+
+# ---------- 单步预览（画布上最常用的接口） ----------
+
+
+def test_preview_respects_row_rules(flow_env, load_user):
+    """预览拿到的行也必须过行级权限 —— 否则画布就成了越权读数的窗口。
+
+    源表有 2 行（德清 / 安徽），owner 只有德清权限，所以预览只能看到 1 行。
+    """
+    env, sf, engine = flow_env
+    flow_id = _prepare(sf, env, load_user, make_dsl(env))
+
+    with sf() as s:
+        flow = service.get_flow(s, flow_id, load_user(env["owner"]))
+        result = service.preview_node(
+            s, flow, make_dsl(env), "src", pg_engine=engine, limit=10
+        )
+
+    assert result["columns"] == ["order_id", "warehouse", "amount"]
+    assert len(result["rows"]) == 1
+    assert result["rows"][0][1] == "德清"
+    assert 'WHERE "warehouse" = \'德清\'' in result["sql"]  # SQL 里确实带了行权
+
+
+def test_preview_of_downstream_node_includes_upstream(flow_env, load_user):
+    """预览下游节点时要跑完整的上游链路（这里 sink 的结果应与源一致）。"""
+    env, sf, engine = flow_env
+    flow_id = _prepare(sf, env, load_user, make_dsl(env))
+
+    with sf() as s:
+        flow = service.get_flow(s, flow_id, load_user(env["owner"]))
+        result = service.preview_node(
+            s, flow, make_dsl(env), "out", pg_engine=engine, limit=10
+        )
+    assert len(result["rows"]) == 1

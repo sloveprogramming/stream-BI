@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.flow.compile import CompiledFlow, compile_flow, validate_flow
+from app.flow.compile import CompiledFlow, compile_flow, compile_select_for, validate_flow
 from app.flow.dsl import FlowDSL
 from app.flow.errors import FlowNotFoundError, FlowPermissionError, FlowValidationError
 from app.models import (
@@ -209,6 +209,33 @@ def preview_compile(session: Session, flow: DataFlow, dsl: FlowDSL) -> CompiledF
     validate_flow(dsl)
     owner = _resolve_owner(session, flow)
     return compile_flow(dsl, session=session, owner=owner)
+
+
+def preview_node(
+    session: Session,
+    flow: DataFlow,
+    dsl: FlowDSL,
+    node_id: str,
+    *,
+    pg_engine,
+    limit: int = 20,
+    timeout_seconds: int = 15,
+) -> dict:
+    """单步预览：只跑「到该节点为止」的链路，取前 N 行。
+
+    这是拖拽编排最要紧的交互 —— 不能预览就等于盲编。
+    取数走 `compile_select_for`（权限已内联）+ 只读事务 + 行数上限。
+
+    注意：如果该节点上游有 AI 算子，因为 AI 结果表要执行时才物化，
+    这里会报"需要先由 Python 执行并物化" —— 先整体跑一次即可。
+    """
+    from app.assistant.tools import execute_readonly
+
+    validate_flow(dsl)
+    owner = _resolve_owner(session, flow)
+    sql = compile_select_for(dsl, node_id, session=session, owner=owner)
+    columns, rows = execute_readonly(pg_engine, sql, {}, limit, timeout_seconds)
+    return {"columns": columns, "rows": rows, "limit": limit, "sql": sql}
 
 
 def validate_only(dsl: FlowDSL, *, max_nodes: int | None = None) -> None:

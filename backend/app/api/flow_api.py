@@ -32,6 +32,11 @@ class FlowBody(BaseModel):
     dsl: dict = Field(description="流程 DSL，结构见 app/flow/dsl.py")
 
 
+class PreviewBody(FlowBody):
+    node_id: str = Field(description="要预览的节点 id")
+    limit: int = Field(default=20, ge=1, le=200)
+
+
 @contextmanager
 def _api_errors():
     """把编排层异常翻译成 HTTP 状态码。权限问题与参数问题必须区分开。"""
@@ -211,6 +216,26 @@ def compile_flow_only(
             "grant_snapshot": compiled.grant_snapshot,
             "used_operators": compiled.used_operators,
         }
+
+
+@router.post("/{flow_id}/preview")
+def preview_node(
+    flow_id: int,
+    body: PreviewBody,
+    principal: AnyPrincipal = Depends(get_any_principal),
+    ctx: Context = Depends(get_ctx),
+):
+    """单步预览：跑「到该节点为止」的链路，取前 N 行。拖拽时最常用的接口。"""
+    with _api_errors(), ctx.session_factory() as session:
+        flow = service.get_flow(session, flow_id, principal.user)
+        return service.preview_node(
+            session,
+            flow,
+            FlowDSL(**body.dsl),
+            body.node_id,
+            pg_engine=ctx.pg_engine,
+            limit=body.limit,
+        )
 
 
 @router.post("/{flow_id}/run")
