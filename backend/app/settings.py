@@ -22,7 +22,20 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-chat"
     llm_timeout_seconds: int = 60
+    # 模型路由：规划/反思用推理模型（更慢但更稳），SQL 生成用 llm_model（快、便宜）
+    llm_planner_model: str = "deepseek-reasoner"
+    llm_planner_timeout_seconds: int = 180
     assistant_max_rows: int = 1000
+    # Agent 循环（Plan-and-Execute）。默认关闭，不影响现有 /assistant/chat 单轮问数。
+    agent_enabled: bool = False
+    agent_max_sub_questions: int = 5
+    agent_max_replans: int = 1
+    agent_max_tool_calls: int = 12
+    agent_evidence_rows: int = 20  # 喂回模型的证据行数上限（控制上下文与成本）
+    agent_max_sql_attempts: int = 2  # 单步「生成→执行→体检→改写」的循环上限
+    agent_clarify_enabled: bool = True  # 口径不明时先反问，不瞎猜
+    # 主动监控：定时跑指标 SQL，命中统计基线异常才启动 Agent 归因
+    monitor_enabled: bool = True
     # 自动发现：定时扫描 ods 模式新表并注册为数据集
     discovery_enabled: bool = True
     discovery_interval_seconds: int = 10

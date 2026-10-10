@@ -41,6 +41,8 @@ class Dataset(Base):
     pk_columns: Mapped[list] = mapped_column(JSON)
     columns: Mapped[list] = mapped_column(JSON)
     description: Mapped[str | None] = mapped_column(String(256))
+    # ERP 侧的中文列注释 {列名: 注释}，由 erp_autosync 回填；供问数时组装 schema 上下文
+    column_comments: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

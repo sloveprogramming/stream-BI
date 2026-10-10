@@ -1,12 +1,11 @@
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import or_
 
-from app.access.grants import resolve_grant
+from app.access.grants import query_visible_datasets, resolve_grant
 from app.access.scoped_query import build_count_sql, build_scoped_sql
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
-from app.models import AuditLog, Dataset, DatasetGrant
+from app.models import AuditLog, Dataset
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -18,15 +17,8 @@ def list_datasets(
 ):
     user = principal.user
     with ctx.session_factory() as session:
-        query = session.query(Dataset).filter(Dataset.enabled.is_(True))
         # 管理员可见全部数据集（含自动发现的新表），普通用户仅见已授权的
-        if not getattr(user, "is_admin", False):
-            conditions = [DatasetGrant.user_id == user.id]
-            if user.role_id is not None:
-                conditions.append(DatasetGrant.role_id == user.role_id)
-            ids_subq = session.query(DatasetGrant.dataset_id).filter(or_(*conditions))
-            query = query.filter(Dataset.id.in_(ids_subq))
-        rows = query.order_by(Dataset.id).all()
+        rows = query_visible_datasets(session, user).all()
         return [
             {
                 "id": d.id,

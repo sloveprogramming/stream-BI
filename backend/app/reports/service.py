@@ -3,9 +3,9 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from app.access.grants import get_effective_grant
+from app.access.grants import resolve_grant
 from app.access.scoped_query import build_scoped_sql
-from app.models import Dataset, DatasetGrant, ReportRun, ReportTask, User
+from app.models import Dataset, ReportRun, ReportTask, User
 
 EXPORTS_DIR = Path("exports")
 
@@ -24,7 +24,7 @@ def generate_report_file(task: ReportTask) -> ReportRun:
         run = ReportRun(task_id=task.id, file_name="", status="failed")
         try:
             owner = session.get(User, task.owner_user_id)
-            grant = get_effective_grant(session, owner, task.dataset_id)
+            grant = resolve_grant(session, owner, task.dataset_id)
             if grant is None:
                 raise ValueError("owner 无该数据集授权")
             sql, params = build_scoped_sql(ds, grant, task.filters or {}, settings.export_max_rows, 0)

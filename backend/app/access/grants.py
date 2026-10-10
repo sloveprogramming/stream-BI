@@ -1,5 +1,7 @@
 """数据集授权判定：用户直授优先于角色授权。"""
-from app.models import DatasetGrant, User
+from sqlalchemy import false, or_
+
+from app.models import Dataset, DatasetGrant, User
 
 
 class AdminGrant:
@@ -38,3 +40,25 @@ def resolve_grant(session, user: User, dataset_id: int):
     if getattr(user, "is_admin", False):
         return AdminGrant()
     return None
+
+
+def query_visible_datasets(session, user: User):
+    """「可见数据集」的统一查询构造 —— Web/API/MCP/导出等出口共用同一口径。
+
+    管理员：全部启用数据集；
+    其他用户：用户直授 ∪ 角色授权（与 `resolve_grant` 的判定语义一致）。
+    返回已按 id 排序的 Query，调用方自行 .all()。
+    """
+    query = session.query(Dataset).filter(Dataset.enabled.is_(True))
+    if not getattr(user, "is_admin", False):
+        conditions = []
+        user_id = getattr(user, "id", None)
+        if user_id is not None:
+            conditions.append(DatasetGrant.user_id == user_id)
+        role_id = getattr(user, "role_id", None)
+        if role_id is not None:
+            conditions.append(DatasetGrant.role_id == role_id)
+        subq = session.query(DatasetGrant.dataset_id)
+        subq = subq.filter(or_(*conditions)) if conditions else subq.filter(false())
+        query = query.filter(Dataset.id.in_(subq))
+    return query.order_by(Dataset.id)

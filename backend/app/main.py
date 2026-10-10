@@ -37,6 +37,12 @@ async def lifespan(app: FastAPI):
     refresh_jobs(scheduler, session_factory)
     refresh_report_jobs(scheduler, session_factory)
 
+    # 主动监控：定时跑指标，命中异常才启动 Agent 归因并生成简报
+    if settings.monitor_enabled:
+        from app.monitor.scheduler import refresh_monitor_jobs
+
+        refresh_monitor_jobs(scheduler, session_factory)
+
     # 定时扫描 ods 新表并自动注册为数据集（ERP 定时同步建表后前端几秒内可见）
     if settings.discovery_enabled:
         def _discovery_job() -> None:
@@ -161,6 +167,10 @@ def create_app() -> FastAPI:
     from app.assistant.chat_api import router as assistant_router
 
     app.include_router(assistant_router, prefix="/api/v1")
+
+    from app.assistant.agent_api import router as agent_router
+
+    app.include_router(agent_router, prefix="/api/v1")
 
     # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
     from pathlib import Path

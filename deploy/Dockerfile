@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir \
     "psycopg[binary]>=3.2" "pymysql>=1.1" "cryptography>=42" \
     "apscheduler>=3.10,<4" "pydantic-settings>=2.3" "httpx>=0.27" \
     "pyjwt>=2.8" "openpyxl>=3.1" "alembic>=1.13" "mcp>=1.10,<2" \
-    "openai>=1.0" "sqlglot>=25.0"
+    "openai>=1.0" "sqlglot>=25.0" "langgraph>=1.0,<2"
 COPY backend/app ./app
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./

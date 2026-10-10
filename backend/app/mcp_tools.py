@@ -1,12 +1,13 @@
 from sqlalchemy import text as sa_text
 
-from app.access.grants import get_effective_grant
+from app.access.grants import query_visible_datasets, resolve_grant
 from app.access.scoped_query import build_count_sql, build_scoped_sql
-from app.models import AuditLog, Dataset, DatasetGrant
+from app.models import AuditLog, Dataset
 
 
-def _grant_for(session, principal, ds: Dataset) -> DatasetGrant:
-    grant = get_effective_grant(session, principal.user, ds.id)
+def _grant_for(session, principal, ds: Dataset):
+    """与 Web/API 通道同口径：管理员在无显式授权时获得全量权限。"""
+    grant = resolve_grant(session, principal.user, ds.id)
     if grant is None:
         raise ValueError(f"无数据集授权: {ds.name}")
     return grant
@@ -27,14 +28,8 @@ def mcp_list_datasets(principal) -> list[dict]:
     engine = make_engine(settings.database_url)
     sf = make_session_factory(engine)
     with sf() as session:
-        q = session.query(Dataset).filter_by(enabled=True)
-        if getattr(principal.user, "role_id", None) is not None:
-            q = q.join(DatasetGrant, DatasetGrant.dataset_id == Dataset.id).filter(
-                DatasetGrant.role_id == principal.user.role_id
-            )
-        else:
-            return []
-        rows = q.order_by(Dataset.id).all()
+        # 与 Web/API 通道共用同一可见性口径：管理员全量，其余为「直授 ∪ 角色授权」
+        rows = query_visible_datasets(session, principal.user).all()
         return [
             {
                 "name": d.name,

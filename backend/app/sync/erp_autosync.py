@@ -42,6 +42,14 @@ _PK_SQL = text(
     "ORDER BY TABLE_NAME, ORDINAL_POSITION"
 )
 
+# ERP 里的中文列注释是问数准确率的高价值线索（模型据此理解字段业务含义），必须捞回来
+_COLUMN_COMMENTS_SQL = text(
+    "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS "
+    "WHERE TABLE_SCHEMA = DATABASE() "
+    "  AND COLUMN_COMMENT IS NOT NULL AND COLUMN_COMMENT <> '' "
+    "ORDER BY TABLE_NAME, ORDINAL_POSITION"
+)
+
 _INCREM_CANDIDATES = (
     "modified",
     "updated_at",
@@ -146,6 +154,54 @@ def scan_erp_metadata(erp_engine: Engine):
     return db_name, tables, columns, pk_map
 
 
+def scan_column_comments(erp_engine: Engine) -> dict[str, dict[str, str]]:
+    """读 ERP 字段的中文注释（只取有注释的）：`{表名: {字段: 注释}}`。"""
+    result: dict[str, dict[str, str]] = {}
+    with erp_engine.connect() as conn:
+        for table_name, column_name, comment in conn.execute(_COLUMN_COMMENTS_SQL).all():
+            value = str(comment or "").strip()
+            if value:
+                result.setdefault(table_name, {})[column_name] = value
+    return result
+
+
+def sync_column_comments(erp_engine: Engine, session_factory) -> dict:
+    """把 ERP 的字段注释回填到 `Dataset.column_comments`。
+
+    桥接关系：ERP 表名 = `SyncTask.source_table` → `SyncTask.target_table`（ods 表）
+    = `Dataset.source_table`。只回填「数据集里确实存在的列」，且内容没变就不写库。
+    """
+    from app.models import Dataset
+
+    comments = scan_column_comments(erp_engine)
+    if not comments:
+        return {"commented_tables": 0, "updated_datasets": 0}
+
+    with session_factory() as session:
+        target_to_source = {
+            t.target_table: t.source_table for t in session.query(SyncTask).all()
+        }
+        updated = 0
+        for dataset in session.query(Dataset).all():
+            erp_table = target_to_source.get(dataset.source_table)
+            if erp_table is None:
+                continue
+            by_column = comments.get(erp_table) or {}
+            picked = {
+                column: by_column[column]
+                for column in (dataset.columns or [])
+                if by_column.get(column)
+            }
+            if picked and picked != (dataset.column_comments or {}):
+                dataset.column_comments = picked
+                updated += 1
+        if updated:
+            session.commit()
+    if updated:
+        logger.info("ERP 字段注释回填：%s 个数据集已更新", updated)
+    return {"commented_tables": len(comments), "updated_datasets": updated}
+
+
 def discover_sync_tasks(erp_engine: Engine, session_factory, settings) -> dict:
     """扫描 ERP 并为新表创建同步任务，返回本次新建的任务 id 与名称。"""
     db_name, tables, columns, pk_map = scan_erp_metadata(erp_engine)
@@ -204,10 +260,17 @@ def discover_sync_tasks(erp_engine: Engine, session_factory, settings) -> dict:
             len(created),
             [c["source_table"] for c in created],
         )
+    try:
+        # 顺带把中文列注释回填给数据集：问数时模型据此理解字段业务含义
+        comment_stats = sync_column_comments(erp_engine, session_factory)
+    except Exception:  # noqa: BLE001 —— 注释回填失败不该影响同步任务的创建
+        logger.exception("ERP 字段注释回填失败")
+        comment_stats = {"commented_tables": 0, "updated_datasets": 0}
     return {
         "database": db_name,
         "erp_tables": len(tables),
         "created": created,
         "skipped_no_pk": plan["skipped_no_pk"],
         "capped": plan["capped"],
+        "column_comments": comment_stats,
     }

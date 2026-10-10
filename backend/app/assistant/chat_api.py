@@ -4,13 +4,12 @@ import time
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
 
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
 from app.assistant.llm import generate_sql
+from app.assistant.prompts import system_prompt, user_prompt
 from app.assistant.schema_context import build_schema_context
-from app.assistant.sql_guard import SqlGuardError, validate_sql
-from app.assistant.sql_rewrite import rewrite_sql
+from app.assistant.tools import SqlGuardError, load_few_shots, run_scoped_sql
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
@@ -55,16 +54,21 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
             yield from _sse([{"type": "error", "message": error}])
             return
         sql = generate_sql(
-            _system_prompt(),
-            schema["prompt"] + _history_prompt(history) + "\n\n用户问题：" + question,
+            system_prompt(),
+            user_prompt(
+                schema["prompt"],
+                question,
+                history,
+                load_few_shots(ctx.session_factory, question, principal.user),
+            ),
         )
         sql = sql.strip()
         while sql.endswith(";"):
             sql = sql[:-1].rstrip()
         yield from _sse([{"type": "sql", "sql": sql}])
-        validate_sql(sql, schema["tables"])
-        rewritten, params = rewrite_sql(sql, schema["tables"])
-        columns, rows = _execute(ctx, rewritten, params)
+        columns, rows = run_scoped_sql(
+            ctx.pg_engine, sql, schema["tables"], ctx.settings.assistant_max_rows
+        )
         row_count = len(rows)
         yield from _sse(
             [
@@ -125,35 +129,3 @@ def _api_recipe(sql: str, tables: list):
         return build_api_recipe(sql, tables)
     except Exception:  # noqa: BLE001
         return None
-
-
-def _execute(ctx: Context, sql: str, params: dict):
-    max_rows = ctx.settings.assistant_max_rows
-    with ctx.pg_engine.begin() as conn:
-        conn.exec_driver_sql("SET TRANSACTION READ ONLY")
-        conn.exec_driver_sql("SET LOCAL statement_timeout = '15s'")
-        result = conn.execute(text(sql), params)
-        columns = list(result.keys())
-        rows = [list(row) for row in result.fetchmany(max_rows + 1)]
-    return columns, rows[:max_rows]
-
-
-def _system_prompt() -> str:
-    return (
-        "你是企业数据助手。根据给定的数据集结构生成一条只读 PostgreSQL SELECT。"
-        "只能使用列出的表和字段；JOIN 键依据字段名和语义自行推理；只返回 SQL，不要解释。"
-    )
-
-
-def _history_prompt(history: list) -> str:
-    """把最近几轮问答带给模型，支持“那按省份呢”这类追问。"""
-    if not history:
-        return ""
-    lines = ["", "", "最近的对话（用于理解追问，可复用其中的查询思路）："]
-    for item in history[-3:]:
-        q = (item or {}).get("question", "")
-        prev_sql = (item or {}).get("sql", "")
-        lines.append(f"- 问：{q}")
-        if prev_sql:
-            lines.append(f"  上次SQL：{prev_sql}")
-    return "\n".join(lines)

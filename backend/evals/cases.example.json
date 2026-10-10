@@ -1,0 +1,16 @@
+[
+  {
+    "id": "example_001",
+    "question": "这里写一条真实业务问题，例如：上周华东区的销售额是多少",
+    "golden_sql": "SELECT sum(amount) FROM 换成你的数据集名 WHERE region = '华东'",
+    "tags": ["示例", "聚合"],
+    "_说明": "这是模板，请替换成真实用例；golden_sql 用「数据集名」，不要写 ods. 物理表名"
+  },
+  {
+    "id": "example_002",
+    "question": "这里写第二条，例如：各仓库的库存总件数分别是多少",
+    "golden_sql": "SELECT warehouse, sum(qty) FROM 换成你的数据集名 GROUP BY warehouse",
+    "tags": ["示例", "分组"],
+    "_说明": "先跑 python -m app.assistant.eval --dump-datasets 拿到真实数据集名与字段"
+  }
+]
