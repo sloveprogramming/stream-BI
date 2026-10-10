@@ -26,6 +26,7 @@ backend/
 │   ├── api/         REST 接口（datasets / flows / admin / reports …）
 │   ├── assistant/   自然语言问数、LangGraph Agent、评测
 │   ├── flow/        数据编排：DSL / 算子库 / 编译器 / 执行器
+│   ├── metrics/     指标字典：口径加载、校验、检索、歧义判定
 │   ├── monitor/     主动监控与异常归因
 │   ├── sync/        ERP → ods 增量同步（水位线 + 结构自动演进）
 │   └── models/      SQLAlchemy 模型
@@ -75,13 +76,24 @@ npx @fission-ai/openspec@latest archive <变更名>  # 归档：把增量规格�
 
 ## 数据编排冒烟
 
-一条命令用真 dbt 跑完整链路（建流程 → 编译 → 物化 → 注册数据集 → 验证行级权限）：
+一条命令用真 dbt 跑完整链路（建流程 → 编译 → 物化 → 注册数据集 → 验证行级权限与指标口径）：
 
 ```
 cd backend && python scripts/flow_smoke.py --cleanup
 ```
 
-看点有两个：物化结果里不该出现越权仓的行；dbt 日志里的表名应是 `dwd.xxx` 而非 `dwd_dwd.xxx`。
+跑两条流程、看三件事：
+
+1. **权限链** —— 物化结果里不该出现越权仓的行；
+2. dbt 日志里的表名应是 `dwd.xxx` 而非 `dwd_dwd.xxx`；
+3. **口径链** —— 生成的 SQL 里应出现指标公式（`(amount - cost) / nullif(amount, 0)`），
+   且算出来的毛利率与源数据吻合。
+
+指标公式来自 `dbt/models/marts/metrics.yml`，本机首次跑前先准备锚点数据集：
+
+```
+cd backend && python scripts/seed_metrics_demo.py
+```
 
 ## 约定
 
@@ -89,3 +101,7 @@ cd backend && python scripts/flow_smoke.py --cleanup
 - 取数只走 `app/assistant/tools.py` 这一个入口，不要在别处手拼 SELECT。
 - 物理列名保持 ASCII；中文展示名填数据集的字段注释（`datasets.column_comments`）。
 - 新增模型必须配 alembic 迁移，并在 `app/models/__init__.py` 导出。
+- **新增口径类字段（毛利率、动销率…）走 `dbt/models/marts/metrics.yml`，不要在流程里手写公式**：
+  画布的「派生字段」填 `metric` 引用指标名，问数会拿到同一份口径，
+  改口径只需改字典、下次编译生效。指标必须填 `owner`（这个数该问谁）。
+  定义文件随代码版本化，改动走评审。

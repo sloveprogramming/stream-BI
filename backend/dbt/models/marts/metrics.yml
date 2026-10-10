@@ -1,0 +1,58 @@
+# 指标口径词典 —— 「一个指标该怎么算」的唯一来源。
+#
+# 谁读它：backend/app/metrics/loader.py（不是 dbt）。
+#   顶层键 `metrics_dictionary` 是 dbt 不认识的键，实测 `dbt parse` 会忽略它
+#   （不报错、只当没有）。之所以不用 MetricFlow 的 `metrics:` 格式，见 loader.py
+#   模块头部的实测记录：它是聚合度量，与编排需要的行级表达式不是一回事。
+#
+# 加一个指标 = 往下面加一段。改动会走代码评审，`owner` 决定"这个数该问谁"。
+#
+# 字段：
+#   name     机器名（ASCII），编排的画布里引用它；改了它等于改接口
+#   label    展示名，中文，问数与画布都显示这个
+#   synonyms 业务方可能用的说法，问数检索靠它（"毛利"要能命中"毛利率"）
+#   expr     行级 SQL 表达式（口径本体）
+#   dataset  锚定的数据集名，必须已在系统里上架
+#   grain    这个指标在什么粒度上有意义（提示用，不参与计算）
+#   unit     单位（展示用）
+#   owner    负责人 —— 生产环境填具体的人（花名/姓名），别填"大家"
+#
+# ⚠️ 演示数据：本仓库自带 3 个指标的锚点数据集（sales_order / inventory_snapshot /
+#    purchase_order）。本机空库时它们尚未上架，指标会被标记为"暂不可用"并给出告警，
+#    但**不会阻塞其余指标**。要真正跑通请先执行：
+#        cd backend && python scripts/seed_metrics_demo.py
+version: 1
+
+metrics_dictionary:
+  # ---- 销售侧 ----
+  - name: gross_margin
+    label: 毛利率
+    synonyms: [毛利, 毛利率, 毛利水平]
+    expr: "(amount - cost) / nullif(amount, 0)"
+    dataset: sales_order
+    grain: [order_id]
+    unit: "%"
+    owner: 财务共享中心
+    description: 支付口径下的毛利率，分母为含税销售额
+
+  # ---- 商品侧 ----
+  - name: sell_through_rate
+    label: 动销率
+    synonyms: [动销, 动销率, 售罄率]
+    expr: "sold_qty / nullif(stock_qty + sold_qty, 0)"
+    dataset: inventory_snapshot
+    grain: [sku, warehouse]
+    unit: "%"
+    owner: 商品运营
+    description: 期内出货量占可售总量的比例，衡量商品消化速度
+
+  # ---- 采购侧 ----
+  - name: on_time_delivery_rate
+    label: 到货及时率
+    synonyms: [到货及时率, 及时到货率, 交货及时率]
+    expr: "on_time_qty / nullif(total_qty, 0)"
+    dataset: purchase_order
+    grain: [po_id]
+    unit: "%"
+    owner: 采购部
+    description: 按期到货数量占采购总量比例，衡量供应商交付表现

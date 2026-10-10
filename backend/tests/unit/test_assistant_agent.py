@@ -13,6 +13,7 @@ from app.assistant.agent import (
     run_agent,
 )
 from app.assistant.tools import SqlGuardError
+from app.metrics import MetricDictionary
 
 SCHEMA = {
     "tables": [{"name": "sales_order", "source_table": "ods.sales_order", "columns": ["id"]}],
@@ -70,7 +71,17 @@ def patched(monkeypatch):
 
 
 def _ctx(**kw):
-    params = dict(session_factory=lambda: None, pg_engine=object(), user=None, max_rows=100)
+    """测试默认接一个**空**指标字典：这些用例聚焦 Agent 循环本身，
+    不该顺带依赖仓库里的 `metrics.yml`。
+    口径歧义那条路径由 `test_assistant_metrics.py` 单独覆盖。
+    """
+    params = dict(
+        session_factory=lambda: None,
+        pg_engine=object(),
+        user=None,
+        max_rows=100,
+        metrics_dictionary=MetricDictionary(),
+    )
     params.update(kw)
     return AgentContext(**params)
 

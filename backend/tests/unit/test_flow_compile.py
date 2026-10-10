@@ -32,12 +32,42 @@ class _Grant:
         self.field_whitelist = field_whitelist
 
 
+class _Query:
+    """极简 query 桩：只覆盖「按条件筛 + 排序 + 取全部」这条链。
+
+    编译器要在编译期做指标语义校验（指标锚定的数据集是否存在），
+    所以要能从 session 里列出数据集 —— 桩必须跟上这个真实接口。
+    """
+
+    def __init__(self, items):
+        self._items = list(items)
+
+    def filter_by(self, **kwargs):
+        return _Query(
+            [
+                item
+                for item in self._items
+                if all(getattr(item, k, None) == v for k, v in kwargs.items())
+            ]
+        )
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return list(self._items)
+
+
 class _Session:
     def __init__(self, datasets):
         self._d = {d.id: d for d in datasets}
+        self._all = list(datasets)
 
     def get(self, model, pk):
         return self._d.get(pk)
+
+    def query(self, model):
+        return _Query(self._all)
 
 
 DS = _DS(1, "sales_order", ["order_id", "warehouse", "amount", "cost"])

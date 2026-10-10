@@ -5,6 +5,9 @@
 2. 样例给到 3 行、并以 `列=值` 形式展开（比裸数组更难错位）；
 3. 明确「写 SQL 用表名，不要加 ods. 前缀」，省掉一类低级错误。
 
+再加一件：**指标口径**（`app/metrics`）。业务词的算法（"毛利率怎么算"）不该让模型
+凭空推断 —— 那是同一个数在不同人手里算出不同结果的根源。口径以字典为准，随上下文一起注入。
+
 取样例行时**同样走权限裁剪器**（字段白名单 + 行级规则），否则会把越权行的真实值带进 prompt。
 """
 from app.access.grants import resolve_grant
@@ -48,7 +51,24 @@ def build_schema_context(session_factory, pg_engine, user) -> dict:
                     "row_rules": grant.row_rules or [],
                 }
             )
-    return {"tables": tables, "prompt": _render_prompt(tables)}
+        metrics_prompt = _metrics_prompt(session)
+    return {
+        "tables": tables,
+        "prompt": _render_prompt(tables),
+        "metrics": metrics_prompt,
+    }
+
+
+def _metrics_prompt(session) -> str:
+    """渲染指标口径清单，供 `user_prompt` 注入。
+
+    刻意**不吞异常**：指标定义写错是配置缺陷（定义文件随代码走），
+    静默降级会造成"问数看起来正常、口径其实是错的" —— 那比直接报错危险得多。
+    编排链路（`flow/compile.py`）同样会加载这份字典，两边行为保持一致。
+    """
+    from app.metrics import load_for
+
+    return load_for(session).render()
 
 
 def _sample_rows(pg_engine, dataset, grant, limit: int = _SAMPLE_LIMIT):

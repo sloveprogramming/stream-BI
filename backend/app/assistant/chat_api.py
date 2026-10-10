@@ -60,6 +60,7 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
                 question,
                 history,
                 load_few_shots(ctx.session_factory, question, principal.user),
+                schema.get("metrics", ""),
             ),
         )
         sql = sql.strip()

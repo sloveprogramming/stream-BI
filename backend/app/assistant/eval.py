@@ -148,7 +148,12 @@ def run_case(case: dict, user, session_factory, pg_engine, max_rows: int) -> Cas
 
     try:
         generated = _strip_sql(
-            generate_sql(system_prompt(), user_prompt(schema["prompt"], question))
+            generate_sql(
+                system_prompt(),
+                user_prompt(
+                    schema["prompt"], question, metrics_prompt=schema.get("metrics", "")
+                ),
+            )
         )
         result.generated_sql = generated
     except Exception as exc:  # noqa: BLE001

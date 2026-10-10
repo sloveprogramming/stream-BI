@@ -15,11 +15,16 @@
 
 ## What Changes
 
-- 把指标定义沉淀为 dbt 语义模型（MetricFlow 格式），每个指标包含
-  名称、展示名、同义词、计算公式、所属数据集、粒度、负责人；
+- 把指标定义沉淀为**随代码版本化的声明式指标文件**
+  （`dbt/models/marts/metrics.yml`，放在 dbt 项目里、但用本项目自己的顶层键），
+  每个指标包含名称、展示名、同义词、计算公式、所属数据集、粒度、负责人；
 - 编排的「派生字段」算子可以**引用指标口径**，而不是手写公式；
 - 问数链路在生成 SQL 前先做**指标对齐**，把口径注入上下文；口径歧义时反问而不是猜；
-- 指标定义随 dbt 项目版本化，任何改动都体现为一次可评审的代码变更。
+- 指标定义随代码版本化，任何改动都体现为一次可评审的代码变更。
+
+> 与立项时的差异：原计划用 dbt 语义模型（MetricFlow）承载。
+> 实现时实测后改掉 —— 它不是跑不通，而是**层次不对**（metric 是聚合度量，
+> 编排要的是行级表达式）。详见 `design.md` 的「实现记录」。
 
 ## Capabilities
 
@@ -34,12 +39,14 @@
 ## Impact
 
 - 新增 `backend/dbt/models/marts/metrics.yml`（指标定义本体）
-- 新增 `backend/app/metrics/`（加载、校验、检索、渲染口径）
+- 新增 `backend/app/metrics/`（加载、校验、检索、渲染口径、歧义判定）
+- 新增 `backend/scripts/seed_metrics_demo.py`（准备指标锚定的演示数据集）
 - 改动 `backend/app/flow/operators/field.py`（`field.derive` 支持指标引用）
 - 改动 `backend/app/flow/compile.py`（编译期展开指标为公式）
-- 改动 `backend/app/assistant/prompts.py`（问数前注入指标口径）
-- 改动 `backend/dbt/dbt_project.yml`（如语义模型需要额外配置）
-- **不新增运行时依赖**：MetricFlow 随 dbt-core 一起安装，已在本机验证可 import
+- 改动 `backend/app/flow/context.py`（把字典注入编译上下文）
+- 改动 `backend/app/assistant/prompts.py` + `schema_context.py`（问数前注入指标口径）
+- 改动 `backend/app/assistant/agent.py`（口径歧义走 clarify，不交给模型判断）
+- **不新增运行时依赖**：只多一个 PyYAML（dbt 本就依赖，这里显式声明）
 
 ## 不做什么（Out of Scope）
 

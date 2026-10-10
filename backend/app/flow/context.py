@@ -14,10 +14,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from app.flow.dsl import FlowDSL, FlowNode
 from app.flow.errors import FlowCompileError, FlowValidationError
 from app.flow.sqlutil import check_ident, sanitize_ident
+from app.metrics.errors import MetricError
+
+if TYPE_CHECKING:
+    from app.metrics.loader import Metric, MetricDictionary
 
 
 @dataclass
@@ -29,6 +34,10 @@ class CompileCtx:
     source_loader: Callable[[FlowNode], str] | None = None
     # 本次编译实际套用的行级规则快照，编译器收集后写进 flow_runs
     grant_snapshot: dict[str, list] = field(default_factory=dict)
+    # 由编译器注入：指标口径词典。
+    # 与 source_loader 同一个思路 —— 算子想展开指标口径只能走 metric()/metric_expr()，
+    # 拿不到"自己读文件解析一遍"的机会，从结构上保证编排与问数用同一份口径。
+    metrics: MetricDictionary | None = None
 
     # ---- CTE 名 ----
 
@@ -101,3 +110,19 @@ class CompileCtx:
             return f'SELECT * FROM "{check_ident(parts[0])}"."{check_ident(parts[1])}"'
         except ValueError as exc:
             raise FlowValidationError(str(exc)) from exc
+
+    # ---- 指标口径（唯一入口）----
+
+    def metric(self, name: str) -> "Metric":
+        """按名取指标。未知指标在这里就报错，并把可用清单带出去。"""
+        if self.metrics is None:
+            raise FlowCompileError("指标字典未注入，拒绝解析指标引用")
+        try:
+            return self.metrics.get(name)
+        except MetricError as exc:
+            # 转成 FlowValidationError：这是配置写错了（400），不是引擎故障（500）
+            raise FlowValidationError(str(exc)) from exc
+
+    def metric_expr(self, name: str) -> str:
+        """把指标名展开成行级 SQL 表达式 —— 编排引用口径的唯一途径。"""
+        return self.metric(name).expr

@@ -21,9 +21,10 @@ from app.access.grants import resolve_grant
 from app.access.scoped_query import build_scoped_sql
 from app.flow.context import CompileCtx
 from app.flow.dsl import SOURCE_PREFIX, FlowDSL, FlowNode, topological_order
-from app.flow.errors import FlowCompileError, FlowPermissionError
+from app.flow.errors import FlowCompileError, FlowPermissionError, FlowValidationError
 from app.flow.operators import get_operator
 from app.flow.sqlutil import sql_literal
+from app.metrics import MetricError, load_dictionary, load_for
 from app.models import Dataset
 
 
@@ -139,9 +140,31 @@ def validate_flow(dsl: FlowDSL) -> None:
 
     给「保存前校验」和「LLM 生成流程后的自检」用；真正能不能跑还要看权限，
     那部分在 `compile_flow` 里。
+
+    指标引用额外对一遍字典（只读文件、不连库）：未知指标属于**配置写错了**，
+    应当和"参数不合法"一样在最早的地方暴露，不该等到编译/执行。
     """
     for node in dsl.nodes:
         get_operator(node.type).parse(node)  # 未知算子 / 参数非法都会在这抛
+    _check_metric_refs(dsl)
+
+
+def _check_metric_refs(dsl: FlowDSL) -> None:
+    """把流程里引用的指标名拿出来对一遍字典。没引用指标就完全不读文件。"""
+    names = [
+        (node.params or {}).get("metric")
+        for node in dsl.nodes
+        if node.type == "field.derive"
+    ]
+    names = [n for n in names if n]
+    if not names:
+        return
+    try:
+        dictionary = load_dictionary()
+        for name in names:
+            dictionary.get(name)
+    except MetricError as exc:
+        raise FlowValidationError(str(exc)) from exc
 
 
 def _ancestors(dsl: FlowDSL, node_id: str) -> set[str]:
@@ -179,7 +202,8 @@ def _build_ctes(
     order = topological_order(dsl.nodes, dsl.edges)
     keep = {upto, *_ancestors(dsl, upto)} if upto is not None else None
 
-    ctx = CompileCtx(dsl=dsl)
+    # 指标字典带上库里的数据集做完整校验：引用了不存在的列会在这一步就报错
+    ctx = CompileCtx(dsl=dsl, metrics=load_for(session))
     sources = _resolve_sources(dsl, session, owner)
     ctx.source_loader = lambda node: sources[node.id].scoped_sql
     for node_id, info in sources.items():

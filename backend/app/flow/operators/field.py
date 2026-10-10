@@ -1,5 +1,5 @@
 """字段处理算子：选择 / 重命名 / 类型转换 / 派生字段。"""
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.flow.errors import FlowCompileError
 from app.flow.operators.base import Operator, register
@@ -100,10 +100,63 @@ class FieldCast(Operator):
 
 
 class DeriveParams(BaseModel):
+    """派生字段：口径来源**二选一**。
+
+    - `expr`  —— 裸 SQL 表达式（临时计算、一次性口径）
+    - `metric` —— 引用指标字典里的口径（**口径类字段应当走这条**）
+
+    为什么强制二选一，而不是"metric 优先、expr 兜底"：两者同时存在时，
+    看代码的人无法判断实际生效的是哪个 —— **"看起来是 A、实际是 B" 的配置
+    正是口径事故的来源**。宁可报错让人明确选一个。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="新列名")
-    expr: str = Field(description="SQL 表达式，如 amount - discount")
+    expr: str | None = Field(
+        default=None,
+        description="SQL 表达式，如 amount - discount；与 metric 二选一",
+    )
+    metric: str | None = Field(
+        default=None,
+        description="指标字典里的指标名（口径由字典定义，改了字典下次编译生效）；与 expr 二选一",
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "DeriveParams":
+        if bool(self.expr) == bool(self.metric):
+            raise ValueError(
+                "expr 与 metric 必须二选一：口径类字段请引用指标（metric），"
+                "临时计算才写表达式（expr）。两者都填时无法判断以谁为准。"
+            )
+        return self
+
+
+def _check_metric_columns(ctx, node, metric) -> None:
+    """指标口径用到的列必须在上游输出里。
+
+    不拦的话，错误要等到 dbt 执行时才由 PostgreSQL 抛出"列不存在"，
+    而且报的是物理列名 —— 排错人要自己反推是哪条流程把列弄丢了。
+    编译期拦住，直接说清"哪个指标、缺哪些列、上游现在有什么"。
+
+    上游列信息推导不出来时（`columns` 为空）不做判断：
+    没有依据的拦截会造成"明明能跑却被拒"，比漏拦更糟。
+    """
+    upstream_ids = ctx.upstream_ids(node)
+    if len(upstream_ids) != 1:
+        return
+    upstream = ctx.columns.get(upstream_ids[0])
+    if not upstream:
+        return
+    known = set(upstream)
+    missing = [c for c in metric.columns if c not in known]
+    if missing:
+        raise FlowCompileError(
+            f"指标「{metric.label}」({metric.name}) 的口径 {metric.expr} 需要列 "
+            f"{', '.join(missing)}，但上游节点 {upstream_ids[0]} 的输出里没有。"
+            f"该上游现有列：{', '.join(upstream)}。"
+            f"请在流程里保留这些列（例如调整「字段选择」），或换用其它指标。"
+        )
 
 
 @register
@@ -111,13 +164,23 @@ class FieldDerive(Operator):
     type = "field.derive"
     category = "字段"
     title = "派生字段"
-    description = "用表达式算出一个新列；口径类字段建议直接引用指标字典里的定义"
+    description = (
+        "算出一个新列。口径类字段（毛利率、动销率…）请填 metric 引用指标字典，"
+        "临时计算才填 expr；两者只能填一个。"
+    )
     Params = DeriveParams
 
     def compile_sql(self, ctx, node) -> str:
         p = self.parse(node)
-        validate_expr(p.expr)
-        return f"SELECT *, ({p.expr}) AS {q_alias(p.name)} FROM {ctx.input(node)}"
+        if p.metric is not None:
+            # 未知指标 / 数据集未上架在这里报错，并带出可用指标清单
+            metric = ctx.metric(p.metric)
+            _check_metric_columns(ctx, node, metric)
+            expr = metric.expr
+        else:
+            validate_expr(p.expr)
+            expr = p.expr
+        return f"SELECT *, ({expr}) AS {q_alias(p.name)} FROM {ctx.input(node)}"
 
     def output_columns(self, ctx, node, input_columns):
         if input_columns is None:

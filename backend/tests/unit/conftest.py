@@ -4,6 +4,7 @@
 用完把它自己造出来的东西（表、流程、授权、生成文件）全部清干净 ——
 本地库是共用的，不清理会污染后续测试。
 """
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -23,6 +24,21 @@ from app.models import (
 
 SOURCE_TABLE = "ods.flow_src"
 GENERATED_DIR = Path(__file__).resolve().parents[2] / "dbt" / "models" / "generated"
+
+
+@pytest.fixture
+def workdir():
+    """项目内的临时目录，供需要落文件的测试用。
+
+    不用 pytest 的 `tmp_path`：它的 basetemp 在系统 %TEMP% 下，
+    本机（沙箱）对那个目录没有清理权限，fixture 初始化阶段就会
+    `PermissionError: [WinError 5]`。放项目内既避开权限问题，
+    也方便用 .gitignore 统一忽略。
+    """
+    root = Path(__file__).resolve().parents[1] / ".tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=root) as path:
+        yield Path(path)
 
 
 @pytest.fixture

@@ -21,6 +21,7 @@ from app.assistant.llm import ROLE_PLANNER, chat, generate_json, generate_sql
 from app.assistant.prompts import system_prompt, user_prompt
 from app.assistant.tools import run_scoped_sql
 from app.assistant.verify import query_with_retry
+from app.metrics import ambiguous_metrics, clarification_for
 
 PLAN_SYSTEM = (
     "你是企业数据分析的规划助手。把给定的业务问题拆成 2~5 个可由 SQL 逐步回答的子问题，"
@@ -81,12 +82,26 @@ class AgentContext:
     max_tool_calls: int = 12
     max_sql_attempts: int = 2
     clarify_enabled: bool = True
+    # 指标字典：注入了就用注入的（测试友好），否则按需从文件加载
+    metrics_dictionary: Any = field(default=None, repr=False)
     _schema: dict | None = field(default=None, repr=False)
+    _metrics: Any = field(default=None, repr=False)
 
     def schema(self) -> dict:
         if self._schema is None:
             self._schema = tools.load_schema(self.session_factory, self.pg_engine, self.user)
         return self._schema
+
+    def metrics(self):
+        """指标字典。口径判定的依据，与编排链路读的是同一份。"""
+        if self.metrics_dictionary is not None:
+            return self.metrics_dictionary
+        if self._metrics is None:
+            from app.metrics import load_for
+
+            with self.session_factory() as session:
+                self._metrics = load_for(session)
+        return self._metrics
 
 
 class AgentState(TypedDict, total=False):
@@ -148,6 +163,13 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
     def clarify_node(state: AgentState) -> dict:
         """口径不明就先反问，而不是猜一个口径直接查。
 
+        分两层，顺序不能反：
+
+        ① **口径歧义由指标字典判定**（`app/metrics/ambiguity.py`）——
+           确定性、可解释、可单测。这一步刻意不交给模型：让模型自行判断该用哪个口径，
+           它正是会自信地给出一个错的数；
+        ② 剩下"缺少范围/时间条件"这类问题才交给模型判断。
+
         刻意做成**无状态**：直接把澄清问题作为本轮结论返回，由客户端追问。
         真 `interrupt()` 需要 checkpointer + thread_id + resume 接口，
         收益不足以抵消这套机器的复杂度；将来若要做多轮挂起再升级。
@@ -155,6 +177,24 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
         started = time.perf_counter()
         if not agent_ctx.clarify_enabled:
             return {"next": "plan"}
+
+        hits = ambiguous_metrics(agent_ctx.metrics(), state["goal"])
+        if hits:
+            return {
+                "clarification": clarification_for(hits),
+                "next": "end",
+                "steps": [
+                    _trace(
+                        "clarify",
+                        "metric_dictionary",
+                        "ok",
+                        {"goal": state["goal"]},
+                        {"ambiguous": True, "metrics": [m.name for m in hits]},
+                        started,
+                    )
+                ],
+            }
+
         verdict = llm.json(CLARIFY_SYSTEM, f"用户问题：{state['goal']}")
         if not verdict.get("ambiguous"):
             return {
@@ -212,7 +252,13 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
             examples = tools.load_few_shots(
                 agent_ctx.session_factory, target["question"], agent_ctx.user
             )
-            prompt = user_prompt(schema["prompt"], target["question"], None, examples)
+            prompt = user_prompt(
+                schema["prompt"],
+                target["question"],
+                None,
+                examples,
+                schema.get("metrics", ""),
+            )
             return llm.sql(system_prompt(), prompt + feedback)
 
         def execute(sql: str):

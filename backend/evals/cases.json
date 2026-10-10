@@ -1,0 +1,14 @@
+[
+  {
+    "id": "metric_001",
+    "question": "每个订单的毛利率是多少",
+    "golden_sql": "SELECT order_id, (amount - cost) / nullif(amount, 0) AS gross_margin FROM sales_order",
+    "tags": ["口径", "指标"]
+  },
+  {
+    "id": "metric_002",
+    "question": "各 SKU 在各仓的动销率是多少",
+    "golden_sql": "SELECT sku, warehouse, sold_qty / nullif(stock_qty + sold_qty, 0) AS sell_through_rate FROM inventory_snapshot",
+    "tags": ["口径", "指标"]
+  }
+]

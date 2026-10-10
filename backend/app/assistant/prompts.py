@@ -30,12 +30,19 @@ def user_prompt(
     question: str,
     history: list | None = None,
     examples: list | None = None,
+    metrics_prompt: str = "",
 ) -> str:
-    """组装给模型的完整用户消息（schema + 动态 few-shot + 历史 + 当前问题）。"""
+    """组装给模型的完整用户消息（schema + 指标口径 + 动态 few-shot + 历史 + 当前问题）。
+
+    `metrics_prompt` 由 `app/metrics` 渲染而来：**口径必须来自字典，不能让模型自己猜**。
+    放在 schema 之后、few-shot 之前 —— 它是"规则"，示例只是"参考"。
+    """
     from app.assistant.fewshot import render as render_examples
 
+    metrics_block = f"\n\n{metrics_prompt}" if metrics_prompt else ""
     return (
         schema_prompt
+        + metrics_block
         + render_examples(examples or [])
         + history_prompt(history or [])
         + "\n\n用户问题："

@@ -14,8 +14,9 @@ clean-targets: ["target", "dbt_packages"]
 # 目录职责（不要混放）：
 #   models/generated/  ← 由 BIsql 编排画布覆盖写入，请勿手改
 #   models/staging/    ← 手写：ods 原始表的轻度清洗视图
-#   models/marts/      ← 手写：面向应用的宽表与指标
-#   models/semantic/   ← 手写：MetricFlow 语义模型（指标口径字典）
+#   models/marts/      ← 手写：面向应用的宽表 + metrics.yml（指标口径词典）
+#   models/marts/metrics.yml ← 顶层键 `metrics_dictionary` 由 app/metrics/loader.py 读，
+#                              dbt 会忽略它（不用 MetricFlow 格式的原因见 loader.py）
 models:
   bisql:
     +materialized: table

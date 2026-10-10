@@ -18,6 +18,8 @@ dependencies = [
     "openai>=1.0",
     "sqlglot>=25.0",
     "langgraph>=1.0,<2",
+    # 指标字典：口径定义文件用 YAML 承载（dbt 也依赖它，这里显式声明）
+    "pyyaml>=6.0",
     # 数据编排：流程编译成 dbt model 后物化
     "dbt-core>=1.8,<2",
     "dbt-postgres>=1.8,<2",
