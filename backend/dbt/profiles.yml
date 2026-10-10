@@ -1,0 +1,16 @@
+# dbt 连接配置。凭据一律走环境变量，不写死在文件里。
+#
+# 默认值对齐 backend/app/settings.py 里的 database_url（本机开发用的 PG），
+# 生产环境请通过 BISQL_DBT_* 覆盖，或改成从密钥管理读取。
+bisql:
+  target: "{{ env_var('BISQL_DBT_TARGET', 'prod') }}"
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('BISQL_DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('BISQL_DBT_PORT', '55432') | int }}"
+      user: "{{ env_var('BISQL_DBT_USER', 'bisql') }}"
+      password: "{{ env_var('BISQL_DBT_PASSWORD', 'bisql') }}"
+      dbname: "{{ env_var('BISQL_DBT_DBNAME', 'bisql') }}"
+      schema: dwd
+      threads: 4

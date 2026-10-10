@@ -106,6 +106,8 @@ class FlowRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
     # ★ 本次运行实际套用的行级规则快照：{数据集名: [规则...]}
     grant_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 运行附加信息：产物数据集、无法继承的行权规则告警、dbt 输出摘要等
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     trigger_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, server_default=func.now()

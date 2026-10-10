@@ -35,6 +35,7 @@ class CompiledFlow:
     schema_yml: str  # 随附的 dbt schema.yml
     model_name: str  # dbt 模型名（= 文件名 = --select 值）
     target: str  # 限定表名，如 dwd.sales_order_clean
+    output_columns: list[str] = field(default_factory=list)  # 产物列（注册数据集用）
     input_datasets: list[dict] = field(default_factory=list)  # 血缘上游
     grant_snapshot: dict[str, list] = field(default_factory=dict)  # 本次实际行权
     used_operators: list[str] = field(default_factory=list)
@@ -184,12 +185,13 @@ def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:
     body = ",\n".join(ctes)
     model_sql = f"{header}WITH {body}\nSELECT * FROM {ctx.cte(dsl.sink.id)}\n"
 
-    sink_cols = ctx.columns.get(dsl.sink.id)
+    sink_cols = ctx.columns.get(dsl.sink.id) or []
     return CompiledFlow(
         model_sql=model_sql,
         schema_yml=_render_schema_yml(dsl, model_name, sink_cols),
         model_name=model_name,
         target=target,
+        output_columns=list(sink_cols),
         input_datasets=sorted(
             [{"id": s.dataset_id, "name": s.dataset_name} for s in sources.values()],
             key=lambda d: d["id"],

@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     erp_autosync_exclude: str = ""  # 逗号分隔 glob，优先于 include
     erp_autosync_max_tables: int = 100  # 安全阀：单次最多自动创建多少个任务
     erp_autosync_run_now: bool = True  # 新建任务后立即跑一次，不等 cron
+    # 数据编排（flow）：画布产出的流程编译成 dbt model 后物化
+    flow_enabled: bool = True
+    flow_dbt_project_dir: str = "dbt"  # 相对 backend/ 的 dbt 项目目录
+    flow_dbt_target: str = "prod"  # profiles.yml 里的 target
+    flow_generated_subdir: str = "models/generated"  # 画布生成的 model 落这里
+    flow_max_nodes: int = 50  # 单条流程的节点数上限（防画布失控）
+    flow_max_share_users: int = 20  # 一条流程产物最多额外授权给多少人
 
 
 @lru_cache

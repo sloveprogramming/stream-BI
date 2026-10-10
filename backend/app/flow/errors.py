@@ -26,5 +26,9 @@ class FlowPermissionError(FlowError):
     """权限不足：编排读源必须过裁剪器，拿不到授权就中止。"""
 
 
+class FlowNotFoundError(FlowError):
+    """流程/版本不存在，或当前用户无权看到（两者统一返回 404，不泄露存在性）。"""
+
+
 class FlowExecutionError(FlowError):
     """执行失败。"""

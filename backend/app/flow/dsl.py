@@ -49,6 +49,9 @@ class FlowOutput(BaseModel):
     materialization: Literal["table", "view"] = "table"
     target_schema: Literal["dwd", "dws", "ads"] = "dwd"
     target_name: str  # 仅表名，不含 schema
+    # 产物的粒度（主键）：由建流程的人声明。数据集分页/去重都依赖它，
+    # 留空会导致查询没有稳定排序，所以强烈建议填。
+    pk_columns: list[str] = Field(default_factory=list)
     register_dataset: bool = True
     # 产物默认只有 owner 可见；要给别人看得显式列在这里
     share_with: list[int] = Field(default_factory=list)

@@ -30,6 +30,9 @@ backend/dbt/target/
 backend/dbt/logs/
 backend/dbt/dbt_packages/
 backend/dbt/.user.yml
+# 画布生成的 model 每次运行都会重写，不入库（保留 README 说明职责）
+backend/dbt/models/generated/*.sql
+backend/dbt/models/generated/*.yml
 .dagster_home/
 .dagster/
 
