@@ -1,11 +1,14 @@
-"""DeepSeek（OpenAI 兼容）客户端：自然语言 → SQL，以及 Agent 规划/反思的结构化调用。
+"""OpenAI 兼容客户端：自然语言 → SQL，以及 Agent 规划/反思的结构化调用。
 
 模型路由（省钱又稳）：
 
-| 角色      | 模型                     | 用途                     |
-|-----------|--------------------------|--------------------------|
-| `sql`     | `settings.llm_model`     | 生成 SQL，要快、要便宜    |
-| `planner` | `settings.llm_planner_model` | 规划与反思，要稳、可容忍慢 |
+| 角色      | 模型                        | 用途                     |
+|-----------|-----------------------------|--------------------------|
+| `sql`     | 配置的 `model`              | 生成 SQL，要快、要便宜    |
+| `planner` | 配置的 `planner_model`      | 规划与反思，要稳、可容忍慢 |
+
+配置来源见 `app/ai/runtime.py`：平台「模型配置」里的默认项优先，
+没有则回退 `BISQL_LLM_*` 环境变量 —— 不在平台里配置时行为与从前一致。
 
 约定：`generate_sql` 的行为与签名保持不变（已有测试与调用方依赖）。
 """
@@ -14,6 +17,7 @@ import re
 
 from openai import OpenAI
 
+from app.ai.runtime import resolve_llm
 from app.settings import get_settings
 
 ROLE_SQL = "sql"
@@ -21,29 +25,29 @@ ROLE_PLANNER = "planner"
 
 
 def build_client() -> OpenAI:
-    s = get_settings()
+    cfg = resolve_llm()
     return OpenAI(
-        api_key=s.llm_api_key,
-        base_url=s.llm_base_url,
-        timeout=s.llm_timeout_seconds,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        timeout=get_settings().llm_timeout_seconds,
     )
 
 
 def build_planner_client() -> OpenAI:
     """推理模型响应更慢，单独给更长的超时。"""
-    s = get_settings()
+    cfg = resolve_llm()
     return OpenAI(
-        api_key=s.llm_api_key,
-        base_url=s.llm_base_url,
-        timeout=s.llm_planner_timeout_seconds,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        timeout=get_settings().llm_planner_timeout_seconds,
     )
 
 
 def model_for(role: str) -> str:
-    s = get_settings()
+    cfg = resolve_llm()
     if role == ROLE_PLANNER:
-        return s.llm_planner_model or s.llm_model
-    return s.llm_model
+        return cfg.planner_model or cfg.model
+    return cfg.model
 
 
 def _client_for(role: str, client=None) -> OpenAI:

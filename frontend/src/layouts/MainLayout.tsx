@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DatabaseOutlined, KeyOutlined, FileTextOutlined, TeamOutlined,
   SettingOutlined, SyncOutlined, AuditOutlined, LogoutOutlined, RobotOutlined,
-  DeploymentUnitOutlined,
+  DeploymentUnitOutlined, ApiOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = Layout
@@ -24,6 +24,7 @@ export default function MainLayout() {
           { type: 'group' as const, label: '管理员', children: [
             { key: '/admin/users', icon: <TeamOutlined />, label: '用户管理' },
             { key: '/admin/datasets', icon: <SettingOutlined />, label: '数据集与授权' },
+            { key: '/admin/providers', icon: <ApiOutlined />, label: '模型配置' },
             { key: '/admin/sync', icon: <SyncOutlined />, label: '同步任务' },
             { key: '/admin/audit', icon: <AuditOutlined />, label: '审计日志' },
           ]},

@@ -12,6 +12,7 @@ import AdminUsers from './pages/admin/Users'
 import AdminDatasets from './pages/admin/DatasetsAdmin'
 import AdminSync from './pages/admin/SyncTasks'
 import AdminAudit from './pages/admin/AuditLogs'
+import AdminProviders from './pages/admin/ModelProviders'
 
 function RequireAuth({ children, admin = false }: { children: React.ReactNode; admin?: boolean }) {
   const token = localStorage.getItem('token')
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="admin/datasets" element={<RequireAuth admin><AdminDatasets /></RequireAuth>} />
         <Route path="admin/sync" element={<RequireAuth admin><AdminSync /></RequireAuth>} />
         <Route path="admin/audit" element={<RequireAuth admin><AdminAudit /></RequireAuth>} />
+        <Route path="admin/providers" element={<RequireAuth admin><AdminProviders /></RequireAuth>} />
       </Route>
     </Routes>
   )

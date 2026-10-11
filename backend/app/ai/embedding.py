@@ -22,6 +22,8 @@ import threading
 from dataclasses import dataclass
 
 from app.ai.errors import AiError, AiUnavailableError
+from app.ai.runtime import default_embedding_row, resolve_embedding_api
+from app.models.provider import SOURCE_API
 from app.settings import get_settings
 
 PROVIDER_AUTO = "auto"
@@ -120,12 +122,45 @@ def api_configured() -> bool:
 def resolve_status() -> ProviderStatus:
     """按配置与环境的实际情况决定用哪个提供方。
 
-    显式指定（`api` / `local`）时**不做任何回退**：用户说用哪个就用哪个，
+    优先级：**平台「模型配置」的默认项 > 环境变量**。
+    显式指定（`api` / `local`）时不做任何回退：用户说用哪个就用哪个，
     不可用就报错。含糊地"帮"他换一条路，是这类能力最危险的失败方式。
     """
     s = get_settings()
-    choice = (s.embedding_provider or PROVIDER_AUTO).strip().lower()
     model = (s.embedding_model or "").strip()
+
+    # ① 平台「模型配置」的默认项 —— 管理员在界面上点的选择，最高优先级
+    row = default_embedding_row()
+    if row is not None:
+        model = row.model or model
+        if row.provider_kind == SOURCE_API:
+            return ProviderStatus(
+                provider="api",
+                configured="db",
+                model=model,
+                reason=f"平台默认配置「{row.name}」",
+                usable=True,
+            )
+        ok, why = local_available()
+        if ok:
+            return ProviderStatus(
+                provider="local",
+                configured="db",
+                model=model,
+                reason=f"平台默认配置「{row.name}」（本地模型）",
+                usable=True,
+            )
+        return ProviderStatus(
+            provider="none",
+            configured="db",
+            model=model,
+            reason=f"平台默认配置「{row.name}」要求本地模型，但{why}",
+            usable=False,
+            fix_hint=_FIX_HINT,
+        )
+
+    # ② 环境变量（与引入平台配置之前的行为一致）
+    choice = (s.embedding_provider or PROVIDER_AUTO).strip().lower()
 
     if choice == PROVIDER_NONE:
         return ProviderStatus(
@@ -202,12 +237,21 @@ def embed_texts(texts: list[str], *, model: str = "", client=None) -> EmbeddingO
 def _build_api_client():
     from openai import OpenAI
 
+    timeout = get_settings().embedding_timeout_seconds
+    # 平台默认配置优先；没有则回退环境变量
+    rt = resolve_embedding_api()
+    if rt is not None:
+        return OpenAI(
+            api_key=rt.api_key or "not-needed",
+            base_url=rt.base_url,
+            timeout=timeout,
+        )
     s = get_settings()
     return OpenAI(
         # 本地自建的向量服务多半不校验 key，但不能传空串给 SDK
         api_key=s.embedding_api_key or "not-needed",
         base_url=s.embedding_api_base,
-        timeout=s.embedding_timeout_seconds,
+        timeout=timeout,
     )
 
 

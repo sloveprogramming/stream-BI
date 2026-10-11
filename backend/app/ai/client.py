@@ -15,7 +15,6 @@ from pydantic import BaseModel, ValidationError
 
 from app.ai.errors import AiUnavailableError, StructuredOutputError
 from app.assistant.llm import ROLE_SQL, chat, parse_json
-from app.settings import get_settings
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -26,11 +25,21 @@ _DEFAULT_SYSTEM = (
 
 
 def ensure_llm_ready() -> None:
-    """没配 key 就直接给出可操作的错误，别等到调 API 才报 401。"""
-    if not get_settings().llm_api_key:
+    """没配置就给出可操作的错误，别等到调 API 才报 401。
+
+    就绪判定认运行时配置（`app/ai/runtime.py`）：平台「模型配置」里
+    登记了默认提供方就算就绪 —— 哪怕它的 key 为空（本地服务不校验 key 是合法的）。
+    """
+    from app.ai.runtime import resolve_llm
+
+    cfg = resolve_llm()
+    if cfg.source.startswith("db:"):
+        return
+    if not cfg.api_key:
         raise AiUnavailableError(
-            "未配置 BISQL_LLM_API_KEY，AI 算子无法调用模型。"
-            "请在 backend/.env 里补上后重试。"
+            "未配置模型调用。两个办法："
+            "① 在平台「模型配置」页登记默认提供方（支持各厂商 API 与 Ollama 等本地服务）；"
+            "② 在 backend/.env 里设 BISQL_LLM_API_KEY。"
         )
 
 
