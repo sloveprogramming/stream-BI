@@ -20,6 +20,8 @@ dependencies = [
     "langgraph>=1.0,<2",
     # 指标字典：口径定义文件用 YAML 承载（dbt 也依赖它，这里显式声明）
     "pyyaml>=6.0",
+    # 向量算子：相似度矩阵计算（约 15MB，无传递依赖；本地 embedding 模型也依赖它）
+    "numpy>=1.26",
     # 数据编排：流程编译成 dbt model 后物化
     "dbt-core>=1.8,<2",
     "dbt-postgres>=1.8,<2",

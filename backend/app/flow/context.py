@@ -17,7 +17,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from app.flow.dsl import FlowDSL, FlowNode
-from app.flow.errors import FlowCompileError, FlowValidationError
+from app.flow.errors import (
+    FlowCompileError,
+    FlowNeedsExecutionError,
+    FlowValidationError,
+)
 from app.flow.sqlutil import check_ident, sanitize_ident
 from app.metrics.errors import MetricError
 
@@ -100,8 +104,10 @@ class CompileCtx:
         """
         table = (node.params or {}).get("materialized_table")
         if not table:
-            raise FlowCompileError(
+            # 用专门的类型：保存阶段遇到它不算错（见 FlowNeedsExecutionError 的说明）
+            raise FlowNeedsExecutionError(
                 f"算子 {node.type} 需要先由 Python 执行并物化结果，才能被下游引用"
+                f"（它不产 SQL —— 保存流程不受影响；要看 SQL 请先运行一次）"
             )
         parts = str(table).split(".")
         if len(parts) != 2:

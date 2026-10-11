@@ -95,6 +95,32 @@ cd backend && python scripts/flow_smoke.py --cleanup
 cd backend && python scripts/seed_metrics_demo.py
 ```
 
+## 向量能力（AI 算子：文本向量化 / 语义去重）
+
+`embed.text` 与 `dedup.semantic` 需要 embedding 环境，二选一：
+
+1. **HTTP API**（立刻可用）：`backend/.env` 里设 `BISQL_EMBEDDING_API_BASE`
+   （任何 OpenAI 兼容的 `/embeddings` 地址，可选 `BISQL_EMBEDDING_API_KEY` /
+   `BISQL_EMBEDDING_MODEL`）；
+2. **本地模型**（免费、数据不出机器）：`pip install "FlagEmbedding>=1.2"`
+   （连带 torch），设 `BISQL_EMBEDDING_PROVIDER=local`；权重约 2.2GB，
+   国内先把 `HF_ENDPOINT=https://hf-mirror.com`。
+
+自检（不下载、不调用）：
+
+```
+cd backend && python scripts/check_embedding.py
+```
+
+链路冒烟（含 AI 算子的编排全链路，用本地假 embeddings 服务验证）：
+
+```
+cd backend && python scripts/embed_smoke.py --cleanup
+```
+
+**约定**：提供方不可用时系统会中止并说明两条出路，**绝不静默降级**成字符相似度 ——
+降级产出的"分组"看起来像语义结果，实际不是。
+
 ## 约定
 
 - 新增查询路径一律用 `resolve_grant`（带管理员兜底），不要用 `get_effective_grant`，否则管理员会 403。

@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     flow_ai_schema: str = "ai_tmp"
     flow_ai_max_rows: int = 5000
     flow_ai_timeout_seconds: int = 120
+    # 向量能力（embed.text / dedup.semantic）。
+    # provider 是显式选择，不做隐式回退：auto 按「先 API 后本地」探测，
+    # 指定 api / local 时不可用就报错（详见 app/ai/embedding.py 的说明）。
+    embedding_provider: str = "auto"  # auto | api | local | none
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_api_base: str = ""  # 任何 OpenAI 兼容的 /embeddings 地址
+    embedding_api_key: str = ""
+    embedding_timeout_seconds: int = 60
+    embedding_batch_size: int = 16
+    embedding_max_chars: int = 1024  # 单条文本截断长度（超长文本既慢又几乎没增益）
 
 
 @lru_cache

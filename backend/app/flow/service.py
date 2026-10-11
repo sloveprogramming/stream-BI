@@ -4,7 +4,9 @@
 
 1. **只增不改**：每次保存写一个新版本，历史留档、可回滚，运行记录带版本号；
 2. **保存即编译**：保存时就把 DSL 编译一次（编译内含权限检查），
-   让"源数据集没授权""表达式写错"这类问题在**保存时**暴露，而不是等半夜跑批才炸；
+   让"源数据集没授权""表达式写错"这类问题在**保存时**暴露，而不是等半夜跑批才炸。
+   例外是**含 AI 算子的流程** —— 它的产物要等执行器跑完 Python 才存在，
+   编译不出静态 SQL，所以保存时只做「参数 + 权限」校验（见 `_compile_for_save`）；
 3. **可见性比数据集严**：编排是"生产"动作，比"消费"更敏感，
    所以不共用数据集那套授权模型 —— 管理员看全部，其他人只看自己的。
 """
@@ -14,7 +16,12 @@ from sqlalchemy.orm import Session
 
 from app.flow.compile import CompiledFlow, compile_flow, compile_select_for, validate_flow
 from app.flow.dsl import FlowDSL
-from app.flow.errors import FlowNotFoundError, FlowPermissionError, FlowValidationError
+from app.flow.errors import (
+    FlowNeedsExecutionError,
+    FlowNotFoundError,
+    FlowPermissionError,
+    FlowValidationError,
+)
 from app.models import (
     DataFlow,
     DataFlowVersion,
@@ -101,22 +108,44 @@ def _guard_size(dsl: FlowDSL, max_nodes: int | None) -> None:
         )
 
 
+def _compile_for_save(session: Session, dsl: FlowDSL, owner) -> CompiledFlow | None:
+    """保存/校验阶段的编译。
+
+    含 AI 算子的流程**编译不出静态 SQL** —— AI 节点不产 SQL，它的产物要等执行器
+    跑完 Python 才存在。这不是错误，是这类流程固有的性质，所以降级为
+    「参数与权限已校验」，返回 None 表示没有可落档的编译产物。
+
+    降级**只针对这一种情况**：`compile_flow` 内部的权限解析发生在遍历节点之前，
+    所以走到这里时「源数据集没授权」早已抛出；其它编译错误（表达式非法、
+    引用不存在的列…）也照旧往外抛。
+    """
+    try:
+        return compile_flow(dsl, session=session, owner=owner)
+    except FlowNeedsExecutionError:
+        return None
+
+
 def _version_row(
     flow: DataFlow,
     version: int,
     dsl: FlowDSL,
-    compiled: CompiledFlow,
+    compiled: CompiledFlow | None,
     created_by: int | None,
 ) -> DataFlowVersion:
+    """落一版。
+
+    `compiled` 为 None 表示这条流程含 AI 算子、编译不出静态 SQL；
+    此时 SQL 与血缘留空，等运行后由 `flow_runs` 补上。
+    """
     return DataFlowVersion(
         flow_id=flow.id,
         version=version,
         version_id=new_version_id(),
         dsl=dsl.model_dump(mode="json"),
-        compiled_sql=compiled.model_sql,
-        compiled_yaml=compiled.schema_yml,
-        dbt_selector=compiled.model_name,
-        input_datasets=compiled.input_datasets,
+        compiled_sql=compiled.model_sql if compiled else "",
+        compiled_yaml=compiled.schema_yml if compiled else "",
+        dbt_selector=compiled.model_name if compiled else dsl.output.target_name,
+        input_datasets=compiled.input_datasets if compiled else [],
         created_by=created_by,
     )
 
@@ -134,7 +163,7 @@ def create_flow(
     if session.query(DataFlow).filter_by(name=dsl.name).first() is not None:
         raise FlowValidationError(f"流程名已存在：{dsl.name}")
 
-    compiled = compile_flow(dsl, session=session, owner=owner)  # 先编译，失败就不建
+    compiled = _compile_for_save(session, dsl, owner)  # 先编译，失败就不建
 
     flow = DataFlow(
         name=dsl.name,
@@ -167,7 +196,7 @@ def save_version(
     _guard_size(dsl, max_nodes)
 
     owner = _resolve_owner(session, flow)
-    compiled = compile_flow(dsl, session=session, owner=owner)
+    compiled = _compile_for_save(session, dsl, owner)
 
     flow.current_version += 1
     if dsl.title:

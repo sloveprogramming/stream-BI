@@ -21,8 +21,10 @@ from app.access.scoped_query import check_ident
 from app.ai.client import structured_call
 from app.ai.errors import AiError
 from app.ai.operators import run_llm_batch
+from app.ai.similarity import STRATEGIES, cluster_by_similarity, pick_representatives
 from app.flow.errors import FlowExecutionError, FlowValidationError
 from app.flow.operators.base import Operator, register
+from app.settings import get_settings
 
 DEFAULT_BATCH_SIZE = 20
 DEFAULT_CONCURRENCY = 4
@@ -246,3 +248,173 @@ class LlmExtract(Operator):
             extracted = mapping.get(values[i]) or {}
             out_rows.append([*r, *[extracted.get(n) for n in names]])
         return [*columns, *names], out_rows
+
+
+# ---------------------------------------------------------------- 向量算子
+#
+# 与上面三个 LLM 算子的区别：它们靠「提示词 + 结构化输出」，这两个靠**向量 + 数值计算**。
+# 提供方因此不是 LLM 而是 embedding 模型（本地或 HTTP API），
+# 而「环境没准备好」必须是一次**可操作的失败**（见 app/ai/embedding.py 的说明）。
+#
+# 缓存与并发沿用同一条管道（`run_llm_batch`）—— 向量也是「文本 → 结果」，
+# 去重、跨运行缓存、分批并发一样适用。
+
+
+def embedding_fingerprint() -> str:
+    """缓存键里代表「用哪套坐标」的那一段。
+
+    必须含提供方与模型：换模型后复用旧向量，等于拿两套不同坐标系的距离去比 ——
+    不会报错，只会默默给出错的分组。
+    """
+    from app.ai.embedding import resolve_status
+
+    status = resolve_status()
+    return f"{status.provider}|{status.model}"
+
+
+def run_embedding_batch(*, values: list[str], session=None) -> dict[str, str]:
+    """文本 → 序列化后的向量。走与 LLM 算子同一条成本管道。"""
+    from app.ai.embedding import embed_texts, serialize_vector
+
+    def per_batch(batch: list[str]) -> dict[str, Any]:
+        outcome = embed_texts(batch)
+        return {
+            text: serialize_vector(vector)
+            for text, vector in zip(batch, outcome.vectors)
+        }
+
+    return run_llm_batch(
+        values=values,
+        # 与 embed.text 共用同一个 key：先跑过向量化的流程，这里直接命中缓存
+        cache_key=f"embed.text|{embedding_fingerprint()}",
+        per_batch=per_batch,
+        batch_size=get_settings().embedding_batch_size,
+        model=embedding_fingerprint(),
+        session=session,
+    )
+
+
+def _ordered_vectors(
+    texts: list[str], serialized: dict[str, str], op_type: str
+) -> list[list[float]]:
+    """按输入顺序取回向量。**缺一条就中止** —— 向量不齐没法比较，不能拿空的顶替。"""
+    from app.ai.embedding import parse_vector
+
+    raw_values = [serialized.get(text) for text in texts]
+    missing = [text for text, raw in zip(texts, raw_values) if not raw]
+    if missing:
+        raise FlowExecutionError(
+            f"算子 {op_type} 有 {len(missing)} 条文本没拿到向量"
+            f"（例如 {missing[0][:40]!r}）。向量不齐无法比较，拒绝继续。"
+        )
+    return [parse_vector(raw) for raw in raw_values]
+
+
+class EmbedTextParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_column: str = Field(description="要向量化的文本列")
+    output_column: str = Field(default="ai_embedding", description="向量写进哪个新列（JSON 文本）")
+
+
+@register
+class EmbedText(Operator):
+    type = "embed.text"
+    category = "AI"
+    title = "文本向量化"
+    description = (
+        "把一列文本转成向量（以 JSON 文本落列）。向量供语义去重与相似检索使用；"
+        "运行前先用 python scripts/check_embedding.py 确认向量能力已就绪"
+    )
+    Params = EmbedTextParams
+    engine = "python"
+
+    def run_python(self, *, node, columns, rows, session=None):
+        p = self.parse(node)
+        _check_output_column(p.output_column, self.type)
+        index = _require_column(columns, p.input_column, self.type)
+
+        values = [None if row[index] is None else str(row[index]) for row in rows]
+        mapping = _wrap_ai_errors(
+            self.type, run_embedding_batch, values=values, session=session
+        )
+        out_rows = [[*row, mapping.get(values[i])] for i, row in enumerate(rows)]
+        return [*columns, p.output_column], out_rows
+
+
+class SemanticDedupParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_column: str = Field(description="要比对的文本列")
+    threshold: float = Field(
+        default=0.92,
+        ge=0.5,
+        le=1.0,
+        description="判定为同一组的余弦相似度阈值：越高越严格（漏合并优于误合并）",
+    )
+    group_column: str = Field(default="semantic_group", description="组号写进哪个新列")
+    flag_column: str = Field(
+        default="is_representative", description="代表行标记写进哪个新列"
+    )
+    representative: str = Field(
+        default="shortest",
+        description="组内代表行怎么挑：shortest（默认，取最短文本，通常是规范名）/ longest / first",
+    )
+    emit_vector: bool = Field(
+        default=False, description="是否把向量也落一列（调试用，约 6KB/行）"
+    )
+
+
+@register
+class SemanticDedup(Operator):
+    type = "dedup.semantic"
+    category = "AI"
+    title = "语义去重（标记分组）"
+    description = (
+        "按语义相似度把文本分组，例如「碧根果」与「碧根果（袋装）」判为同一商品。"
+        "只加分组列、不删行；要只留代表行，后面接一个「过滤」算子即可。"
+        "需要先准备向量能力（python scripts/check_embedding.py）"
+    )
+    Params = SemanticDedupParams
+    engine = "python"
+
+    def run_python(self, *, node, columns, rows, session=None):
+        p = self.parse(node)
+        _check_output_column(p.group_column, self.type)
+        _check_output_column(p.flag_column, self.type)
+        if p.emit_vector:
+            _check_output_column("ai_embedding", self.type)
+        if p.representative not in STRATEGIES:
+            raise FlowValidationError(
+                f"算子 {self.type} 的代表行策略 {p.representative!r} 不合法，可选 {STRATEGIES}"
+            )
+        index = _require_column(columns, p.input_column, self.type)
+
+        texts = ["" if row[index] is None else str(row[index]) for row in rows]
+        serialized = _wrap_ai_errors(
+            self.type, run_embedding_batch, values=texts, session=session
+        )
+        vectors = _ordered_vectors(texts, serialized, self.type)
+
+        groups = _wrap_ai_errors(
+            self.type, cluster_by_similarity, vectors, p.threshold
+        )
+        flags = _wrap_ai_errors(
+            self.type,
+            pick_representatives,
+            texts,
+            groups,
+            strategy=p.representative,
+        )
+
+        out_rows = []
+        for i, row in enumerate(rows):
+            extra: list[Any] = [groups[i], flags[i]]
+            if p.emit_vector:
+                extra.append(serialized.get(texts[i]))
+            out_rows.append([*row, *extra])
+
+        header = [*columns, p.group_column, p.flag_column]
+        if p.emit_vector:
+            header.append("ai_embedding")
+        return header, out_rows

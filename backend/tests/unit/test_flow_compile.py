@@ -309,3 +309,112 @@ def test_python_operator_uses_materialized_table(monkeypatch):
         assert 'SELECT * FROM "dwd"."_ai_labels"' in compiled.model_sql
     finally:
         REGISTRY.pop("test.python_op2", None)
+
+
+# ---------- AI 算子的取数入口 ----------
+
+
+def test_compile_input_for_stops_at_the_upstream(monkeypatch):
+    """AI 算子取数必须编到「它的输入」为止。
+
+    这是被端到端冒烟抓出来的真 bug：run_ai_nodes 原先用 compile_select_for
+    编到 AI 节点自己 —— 它不产 SQL，第一步就抛「需要先物化」，
+    导致**任何含 AI 算子的流程都跑不起来**（单测只测了 run_python，没跑到这里）。
+    """
+    from app.flow.compile import compile_input_for
+
+    _patch(monkeypatch, _Grant())
+    dsl = FlowDSL(
+        name="tag_products",
+        nodes=[
+            FlowNode(id="src", type="source.dataset", params={"dataset_id": 1}),
+            FlowNode(
+                id="ai",
+                type="llm.classify",
+                params={"input_column": "name", "labels": ["坚果", "干货"]},
+            ),
+            FlowNode(id="out", type="sink.materialize", params={}),
+        ],
+        edges=[
+            FlowEdge(source="src", target="ai"),
+            FlowEdge(source="ai", target="out"),
+        ],
+        output=FlowOutput(target_name="tbl"),
+    )
+    sql = compile_input_for(dsl, "ai", session=_Session([DS]), owner=object())
+    assert sql.rstrip().endswith("FROM op_src")
+    assert "op_ai" not in sql  # 不该编到 AI 节点自己
+
+
+def test_compile_input_for_rejects_multi_input(monkeypatch):
+    """AI 算子吃"上游一份数据"，多个输入没法唯一确定取哪份。"""
+    from app.flow.compile import compile_input_for
+
+    _patch(monkeypatch, _Grant())
+    dsl = FlowDSL(
+        name="two_sources",
+        nodes=[
+            FlowNode(id="a", type="source.dataset", params={"dataset_id": 1}),
+            FlowNode(id="b", type="source.dataset", params={"dataset_id": 1}),
+            FlowNode(
+                id="ai",
+                type="llm.classify",
+                params={"input_column": "name", "labels": ["坚果", "干货"]},
+            ),
+            FlowNode(id="out", type="sink.materialize", params={}),
+        ],
+        edges=[
+            FlowEdge(source="a", target="ai"),
+            FlowEdge(source="b", target="ai"),
+            FlowEdge(source="ai", target="out"),
+        ],
+        output=FlowOutput(target_name="tbl"),
+    )
+    with pytest.raises(FlowCompileError, match="只接受一个输入"):
+        compile_input_for(dsl, "ai", session=_Session([DS]), owner=object())
+
+
+def test_compile_input_for_unknown_node():
+    from app.flow.compile import compile_input_for
+
+    dsl = FlowDSL(
+        name="t",
+        nodes=[
+            FlowNode(id="src", type="source.dataset", params={"dataset_id": 1}),
+            FlowNode(id="out", type="sink.materialize", params={}),
+        ],
+        edges=[FlowEdge(source="src", target="out")],
+        output=FlowOutput(target_name="tbl"),
+    )
+    with pytest.raises(FlowCompileError, match="节点不存在"):
+        compile_input_for(dsl, "nope", session=_Session([DS]), owner=object())
+
+
+def test_saving_a_flow_with_ai_operators_succeeds_without_sql(flow_env, load_user):
+    """含 AI 算子的流程保存时不该报错 —— 它编译不出静态 SQL 是固有性质，
+    不是配置错误。SQL 与血缘留空，等运行后由 flow_runs 补。"""
+    from app.flow import service
+
+    ids, session_factory, _engine = flow_env
+    dsl = FlowDSL(
+        name=f"flowt_{ids['suffix']}_ai",
+        nodes=[
+            FlowNode(id="src", type="source.dataset", params={"dataset_id": ids["ds"]}),
+            FlowNode(
+                id="ai",
+                type="llm.classify",
+                params={"input_column": "name", "labels": ["坚果", "干货"]},
+            ),
+            FlowNode(id="out", type="sink.materialize", params={}),
+        ],
+        edges=[
+            FlowEdge(source="src", target="ai"),
+            FlowEdge(source="ai", target="out"),
+        ],
+        output=FlowOutput(target_name=f"flowt_{ids['suffix']}_tbl"),
+    )
+    with session_factory() as session:
+        flow = service.create_flow(session, dsl=dsl, owner=load_user(ids["owner"]))
+        version = service.get_version(session, flow)
+        assert version.compiled_sql == ""  # 没有可落档的 SQL
+        assert version.dbt_selector == f"flowt_{ids['suffix']}_tbl"

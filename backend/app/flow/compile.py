@@ -235,16 +235,37 @@ def _build_ctes(
 
 
 def compile_select_for(dsl: FlowDSL, node_id: str, *, session, owner) -> str:
-    """编译出「到 node_id 为止」的一条 SELECT。
+    """编译出「到 node_id 为止（含）」的一条 SELECT。
 
-    AI 算子靠它取上游数据：执行这条 SELECT 拿到行，喂给模型，
-    再把结果物化成表供下游 dbt 模型引用。权限同样由 `_resolve_sources` 套好，
-    所以 AI 算子也看不到自己没权限的行。
+    语义是**预览这一步的结果**：单步预览用。对 SQL 节点，产物就是该节点算完的样子。
+
+    ⚠️ 不能拿它给 AI 算子取数 —— AI 节点自己不产 SQL，编到它就会
+    `FlowNeedsExecutionError`。给 AI 算子取上游数据用 `compile_input_for`。
     """
     if node_id not in dsl.node_map():
         raise FlowCompileError(f"节点不存在：{node_id}")
     built = _build_ctes(dsl, session=session, owner=owner, upto=node_id)
     return f"WITH {',\n'.join(built.ctes)}\nSELECT * FROM {built.ctx.cte(node_id)}\n"
+
+
+def compile_input_for(dsl: FlowDSL, node_id: str, *, session, owner) -> str:
+    """编译出「node_id 的上游输入」的一条 SELECT —— AI 算子的取数入口。
+
+    AI 算子吃的是**上游的数据**（它自己不产 SQL，产物由执行器物化），
+    所以这里编到它的输入节点为止、**不含它自己**。
+    权限同样由 `_resolve_sources` 内联 —— AI 算子照样看不到没授权的行。
+    """
+    node = dsl.node_map().get(node_id)
+    if node is None:
+        raise FlowCompileError(f"节点不存在：{node_id}")
+    upstreams = dsl.upstream_ids(node_id)
+    if len(upstreams) != 1:
+        raise FlowCompileError(
+            f"算子 {node.type} 只接受一个输入，实际收到 {len(upstreams)} 个"
+        )
+    source_id = upstreams[0]
+    built = _build_ctes(dsl, session=session, owner=owner, upto=source_id)
+    return f"WITH {',\n'.join(built.ctes)}\nSELECT * FROM {built.ctx.cte(source_id)}\n"
 
 
 def compile_flow(dsl: FlowDSL, *, session, owner) -> CompiledFlow:

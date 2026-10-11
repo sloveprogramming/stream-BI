@@ -22,6 +22,17 @@ class FlowCompileError(FlowError):
     """编译失败。"""
 
 
+class FlowNeedsExecutionError(FlowCompileError):
+    """该流程编译不出静态 SQL，因为里面有需要先执行的节点。
+
+    目前只有一种情况：**AI 算子**。它不产 SQL，产物要等执行器跑完 Python 才存在
+    （见 `context.external_source`）。
+
+    单独一类是为了让调用方能区分处理：**运行时**遇到它是真失败（该报错），
+    而**保存/校验阶段**遇到它不是错误 —— 用户只是在录一条"跑起来才知道"的流程。
+    """
+
+
 class FlowPermissionError(FlowError):
     """权限不足：编排读源必须过裁剪器，拿不到授权就中止。"""
 

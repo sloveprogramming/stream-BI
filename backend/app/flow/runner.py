@@ -23,7 +23,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from app.flow.compile import CompiledFlow, compile_flow, compile_select_for
+from app.flow.compile import CompiledFlow, compile_flow, compile_input_for
 from app.flow.dsl import FlowDSL, FlowNode, topological_order
 from app.flow.errors import FlowError, FlowExecutionError, FlowPermissionError
 from app.flow.operators import get_operator
@@ -195,7 +195,7 @@ def run_ai_nodes(session, dsl: FlowDSL, *, owner, pg_engine, settings) -> dict[s
     """先把 AI 节点跑完并物化，再把物化表名写回节点参数。
 
     为什么必须先跑：AI 算子不产 SQL，下游 dbt 模型只能引用它的**结果表**。
-    取数走 `compile_select_for`（内部经权限裁剪器），所以喂给模型的只有该用户
+    取数走 `compile_input_for`（内部经权限裁剪器），所以喂给模型的只有该用户
     有权看到的数据 —— 这一点很关键，不能让模型成为越权读数的通道。
     """
     ai_nodes = [
@@ -214,8 +214,10 @@ def run_ai_nodes(session, dsl: FlowDSL, *, owner, pg_engine, settings) -> dict[s
 
     for node in ai_nodes:
         op = get_operator(node.type)
-        # 权限已内联在这条 SELECT 里
-        sql = compile_select_for(dsl, node.id, session=session, owner=owner)
+        # 取「该节点的上游输入」喂给模型。必须用 compile_input_for 而不是
+        # compile_select_for：AI 节点自己不产 SQL，编到它自己必然报
+        # 「需要先由 Python 执行并物化」。权限已内联在这条 SELECT 里。
+        sql = compile_input_for(dsl, node.id, session=session, owner=owner)
         columns, rows = execute_readonly(
             pg_engine,
             sql,
