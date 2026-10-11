@@ -24,6 +24,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.flow.compile import CompiledFlow, compile_flow, compile_input_for
+from app.flow import lineage
 from app.flow.dsl import FlowDSL, FlowNode, topological_order
 from app.flow.errors import FlowError, FlowExecutionError, FlowPermissionError
 from app.flow.operators import get_operator
@@ -387,6 +388,15 @@ def run_flow(
             if ds is not None:
                 flow.output_dataset_id = ds.id
                 meta["dataset"] = {"id": ds.id, "name": ds.name, "columns": len(ds.columns or [])}
+                # 血缘事件只记「真的发生了的加工」：失败/中止不 emit（spec 显式场景）。
+                # 与运行记录同事务落库 —— 排障时事件和运行记录必然对得上。
+                lineage.emit_run_event(
+                    session,
+                    flow=flow,
+                    run_id=run.run_id,
+                    inputs=list(compiled.input_datasets or []),
+                    output=ds.name,
+                )
             if warnings:
                 meta["warnings"] = warnings
             run.rows_out = _count_rows(pg_engine, compiled.target)

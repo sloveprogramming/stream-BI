@@ -20,6 +20,7 @@ from app.models.eval import EvalRun, new_batch_id
 from app.models.fewshot import VerifiedQa
 from app.models.flow import DataFlow, DataFlowVersion, FlowRun, new_flow_run_id, new_version_id
 from app.models.monitor import MonitorObservation, MonitorTask
+from app.models.lineage import LineageEvent
 from app.models.provider import ModelProvider
 
-__all__ = [*__all__, "ModelProvider"]
+__all__ = [*__all__, "LineageEvent", "ModelProvider"]

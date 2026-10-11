@@ -96,6 +96,17 @@ cd backend && python scripts/flow_smoke.py --cleanup
 cd backend && python scripts/seed_metrics_demo.py
 ```
 
+## 数据血缘
+
+编排每次成功运行落一条 OpenLineage 事件（`lineage_events` 表；失败运行不记 ——
+血缘只记"真的发生了的加工"）。数据集详情页可看**双向追溯**：
+
+- **上游**：这批数从哪来 —— 逐层追到物理源表；
+- **下游**：改它会砸到谁 —— 影响分析。
+
+血缘只暴露名字与结构（无列清单、无数据），登录即可查 ——
+影响分析必须能看到"别人的"下游，按权限裁剪会让结果静默漏掉看不见的节点。
+
 ## 向量能力（AI 算子：文本向量化 / 语义去重）
 
 `embed.text` 与 `dedup.semantic` 需要 embedding 环境，二选一：

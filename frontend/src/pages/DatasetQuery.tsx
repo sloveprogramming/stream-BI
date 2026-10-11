@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Alert, Button, Card, Empty, Input, Select, Space, Switch, Table, Typography, message,
+  Alert, Button, Card, Collapse, Empty, Input, Select, Space, Spin, Switch, Table, Tag, Typography, message,
 } from 'antd'
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { useParams } from 'react-router-dom'
@@ -11,6 +11,37 @@ type Cond = { field?: string; value?: string }
 
 const REFRESH_MS = 5000
 const PAGE_SIZE = 20
+
+/** 一层血缘：节点 Tag + 经由的流程 + 物理源标注 */
+function LineageLayer({ data, emptyText }: { data: any; emptyText: string }) {
+  const layers: any[][] = data?.layers || []
+  if (!layers.length)
+    return (
+      <div style={{ marginTop: 4 }}>
+        <Typography.Text type="secondary">{emptyText}</Typography.Text>
+      </div>
+    )
+  return (
+    <Space direction="vertical" size={6} style={{ width: '100%', marginTop: 4 }}>
+      {layers.map((layer, i) => (
+        <div key={i}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            第 {i + 1} 层
+          </Typography.Text>
+          <div>
+            {layer.map((n: any) => (
+              <Tag key={n.name} color={n.leaf ? 'orange' : 'blue'} style={{ marginBottom: 4 }}>
+                {n.name}
+                {n.via ? `（经由 ${n.via}）` : ''}
+                {n.leaf ? ' · 物理源表' : ''}
+              </Tag>
+            ))}
+          </div>
+        </div>
+      ))}
+    </Space>
+  )
+}
 
 export default function DatasetQuery() {
   const { name } = useParams()
@@ -26,6 +57,8 @@ export default function DatasetQuery() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastAt, setLastAt] = useState<Date | null>(null)
   const [loading, setLoading] = useState(false)
+  const [lineage, setLineage] = useState<{ upstream: any; downstream: any } | null>(null)
+  const [lineageOpen, setLineageOpen] = useState(false)
 
   const appliedRef = useRef(applied)
   const pageRef = useRef(page)
@@ -84,6 +117,17 @@ export default function DatasetQuery() {
   const onReset = () => {
     setConds([{ field: undefined, value: '' }])
     runQuery({}, 1)
+  }
+
+  // 血缘懒加载：展开面板时才查（数据页的主任务是查数据）
+  const loadLineage = () => {
+    if (!name) return
+    Promise.all([
+      http.get(`/lineage/datasets/${name}/upstream`, { params: { depth: 3 } }),
+      http.get(`/lineage/datasets/${name}/downstream`, { params: { depth: 3 } }),
+    ])
+      .then(([u, d]) => setLineage({ upstream: u.data, downstream: d.data }))
+      .catch((e: any) => message.error(e.response?.data?.detail || '血缘查询失败'))
   }
 
   const doExport = async (format: string) => {
@@ -206,6 +250,41 @@ export default function DatasetQuery() {
           }
         />
       )}
+      <Collapse
+        style={{ marginTop: 16 }}
+        activeKey={lineageOpen ? ['lineage'] : []}
+        onChange={(keys) => {
+          const open = (keys as string[]).includes('lineage')
+          setLineageOpen(open)
+          if (open && !lineage) loadLineage()
+        }}
+        items={[
+          {
+            key: 'lineage',
+            label: '血缘（上游来源 / 下游影响）',
+            children: lineage ? (
+              <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                <div>
+                  <Typography.Text strong>上游（这批数从哪来）</Typography.Text>
+                  <LineageLayer
+                    data={lineage.upstream}
+                    emptyText="没有上游 —— 它是源头数据集（或还没有流程加工出它）"
+                  />
+                </div>
+                <div>
+                  <Typography.Text strong>下游（改它会砸到谁）</Typography.Text>
+                  <LineageLayer
+                    data={lineage.downstream}
+                    emptyText="没有下游 —— 还没有流程把它加工成别的数据集"
+                  />
+                </div>
+              </Space>
+            ) : (
+              <Spin size="small" />
+            ),
+          },
+        ]}
+      />
     </Card>
   )
 }

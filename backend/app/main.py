@@ -180,6 +180,10 @@ def create_app() -> FastAPI:
 
     app.include_router(provider_router, prefix="/api/v1")
 
+    from app.api.lineage_api import router as lineage_router
+
+    app.include_router(lineage_router, prefix="/api/v1")
+
     # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
     from pathlib import Path
 

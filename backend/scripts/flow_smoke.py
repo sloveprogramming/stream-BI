@@ -38,7 +38,7 @@ sys.path.insert(0, _HERE)  # scripts/ —— 复用指标演示数据集的准�
 import sqlalchemy as sa  # noqa: E402
 
 from app.db import make_engine, make_session_factory  # noqa: E402
-from app.flow import service  # noqa: E402
+from app.flow import lineage, service  # noqa: E402
 from app.flow.dsl import FlowDSL, FlowEdge, FlowNode, FlowOutput  # noqa: E402
 from app.flow.runner import run_flow  # noqa: E402
 from app.models import (  # noqa: E402
@@ -47,6 +47,7 @@ from app.models import (  # noqa: E402
     Dataset,
     DatasetGrant,
     FlowRun,
+    LineageEvent,
     User,
 )
 from app.settings import get_settings  # noqa: E402
@@ -224,6 +225,7 @@ def _drop_flow(session, name: str) -> None:
     if flow is None:
         return
     session.query(FlowRun).filter(FlowRun.flow_id == flow.id).delete()
+    session.query(LineageEvent).filter(LineageEvent.flow_id == flow.id).delete()
     session.query(DataFlowVersion).filter(DataFlowVersion.flow_id == flow.id).delete()
     session.delete(flow)
 
@@ -306,6 +308,38 @@ def main() -> int:
         leaked = [r for r in rows if WAREHOUSE not in str(r)]
         if leaked:
             failures.append(f"行级权限泄漏：{leaked}")
+
+    # ---------- 血缘断言（权限链刚跑完，事件应已落库） ----------
+    with sf() as session:
+        events = (
+            session.query(LineageEvent)
+            .filter(LineageEvent.job_name == f"flow:{FLOW_NAME}")
+            .order_by(LineageEvent.id)
+            .all()
+        )
+        if not events:
+            failures.append("权限链成功运行后没有落血缘事件")
+        else:
+            payload = events[-1].payload
+            if payload.get("eventType") != "COMPLETE":
+                failures.append(f"血缘事件类型异常：{payload.get('eventType')}")
+            if DATASET_NAME not in [i["name"] for i in payload.get("inputs", [])]:
+                failures.append(f"血缘事件 inputs 缺源数据集：{payload.get('inputs')}")
+            if payload.get("outputs", [{}])[0].get("name") != FLOW_NAME:
+                failures.append(f"血缘事件 outputs 异常：{payload.get('outputs')}")
+
+            up = lineage.upstream(session, FLOW_NAME, depth=2)
+            layer1 = [n["name"] for n in (up["layers"] or [{}])[0]] if up["layers"] else []
+            if DATASET_NAME not in layer1:
+                failures.append(f"产物上游追溯缺源数据集：{layer1}")
+            down = lineage.downstream(session, DATASET_NAME, depth=2)
+            d_layer1 = (
+                [n["name"] for n in down["layers"][0]] if down["layers"] else []
+            )
+            if FLOW_NAME not in d_layer1:
+                failures.append(f"源数据集下游追溯缺产物：{d_layer1}")
+            print(f"血缘 upstream({FLOW_NAME}) 第1层: {layer1}")
+            print(f"血缘 downstream({DATASET_NAME}) 第1层: {d_layer1}")
 
     # ---------- 流程 2：口径链 ----------
     margin_run = run_one(sf, engine, settings, admin_id, build_metric_dsl(sales_id), "口径链")
