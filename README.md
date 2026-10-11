@@ -82,12 +82,13 @@ npx @fission-ai/openspec@latest archive <变更名>  # 归档：把增量规格�
 cd backend && python scripts/flow_smoke.py --cleanup
 ```
 
-跑两条流程、看三件事：
+跑三条流程、看四件事：
 
 1. **权限链** —— 物化结果里不该出现越权仓的行；
 2. dbt 日志里的表名应是 `dwd.xxx` 而非 `dwd_dwd.xxx`；
 3. **口径链** —— 生成的 SQL 里应出现指标公式（`(amount - cost) / nullif(amount, 0)`），
-   且算出来的毛利率与源数据吻合。
+   且算出来的毛利率与源数据吻合；
+4. **质量链** —— 违规行被 `qa_passed=false` 标记且原因可读，**行数与上游一致**（不删行）。
 
 指标公式来自 `dbt/models/marts/metrics.yml`，本机首次跑前先准备锚点数据集：
 

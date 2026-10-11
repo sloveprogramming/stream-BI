@@ -64,6 +64,11 @@ METRIC_DATASET = "sales_order"
 # 源数据 (amount, cost) 依次为 (100,60) (200,150) (50,45)
 EXPECTED_MARGIN = {1: 0.4, 2: 0.25, 3: 0.1}
 
+QA_FLOW = "e2e_quality"
+QA_TARGET = "dwd.e2e_quality"
+# 权限链过滤后的德清行 amount 为 20 与 30：25 的上限让 30 必然违规
+QA_AMOUNT_CAP = 25
+
 
 def build_dsl(dataset_id: int) -> FlowDSL:
     return FlowDSL(
@@ -113,6 +118,46 @@ def build_metric_dsl(dataset_id: int) -> FlowDSL:
         output=FlowOutput(
             target_name=METRIC_FLOW, target_schema="dwd", pk_columns=["order_id"]
         ),
+    )
+
+
+def build_qa_dsl(dataset_id: int) -> FlowDSL:
+    """质量链：过滤后的德清订单做质量校验（一条必过规则 + 一条必违规则）。
+
+    质量算子不删行：违规行带着原因进产物，行数必须与上游一致。
+    """
+    return FlowDSL(
+        name=QA_FLOW,
+        title="质量校验冒烟",
+        description="非空 / 值域校验，违规行被标记而不删行",
+        nodes=[
+            FlowNode(id="src", type="source.dataset", params={"dataset_id": dataset_id}),
+            FlowNode(
+                id="dedup",
+                type="clean.dedup",
+                params={"keys": ["order_id"], "keep": "last", "order_by": "amount"},
+            ),
+            FlowNode(id="filt", type="clean.filter", params={"expr": "amount > 15"}),
+            FlowNode(
+                id="qa",
+                type="quality.assert",
+                params={
+                    "not_null": ["amount"],
+                    "rules": [
+                        {"column": "amount", "op": "ge", "value": 0},
+                        {"column": "amount", "op": "le", "value": QA_AMOUNT_CAP},
+                    ],
+                },
+            ),
+            FlowNode(id="out", type="sink.materialize", params={}),
+        ],
+        edges=[
+            FlowEdge(source="src", target="dedup"),
+            FlowEdge(source="dedup", target="filt"),
+            FlowEdge(source="filt", target="qa"),
+            FlowEdge(source="qa", target="out"),
+        ],
+        output=FlowOutput(target_name=QA_FLOW, target_schema="dwd", pk_columns=["order_id"]),
     )
 
 
@@ -195,15 +240,18 @@ def cleanup(engine, sf) -> None:
     with sf() as session:
         _drop_flow(session, FLOW_NAME)
         _drop_flow(session, METRIC_FLOW)
+        _drop_flow(session, QA_FLOW)
         session.flush()
         # 产物数据集由流程注册，名字就是产物表名
         _drop_dataset(session, FLOW_NAME)
         _drop_dataset(session, METRIC_FLOW)
+        _drop_dataset(session, QA_FLOW)
         _drop_dataset(session, DATASET_NAME)
         session.commit()
     with engine.begin() as conn:
         conn.execute(sa.text(f"DROP TABLE IF EXISTS {TARGET}"))
         conn.execute(sa.text(f"DROP TABLE IF EXISTS {METRIC_TARGET}"))
+        conn.execute(sa.text(f"DROP TABLE IF EXISTS {QA_TARGET}"))
         conn.execute(sa.text(f"DROP TABLE IF EXISTS {SOURCE_TABLE}"))
 
 
@@ -289,6 +337,31 @@ def main() -> int:
                     f"订单 {order_id} 的毛利率 {value} 与期望 {expected} 不符"
                 )
 
+    # ---------- 流程 3：质量链 ----------
+    qa_run = run_one(sf, engine, settings, admin_id, build_qa_dsl(e2e_id), "质量链")
+    if qa_run.status != "ok":
+        failures.append(f"质量链流程失败：{qa_run.error}")
+    else:
+        schema, table = QA_TARGET.split(".")
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    f"SELECT order_id, amount, qa_passed, qa_reason "
+                    f'FROM "{schema}"."{table}" ORDER BY order_id'
+                )
+            ).fetchall()
+        print(f"质量链 materialized: {rows}")
+        if len(rows) != 2:
+            failures.append(f"质量校验不应删行：期望 2 行，实际 {len(rows)}")
+        by_order = {row[0]: row for row in rows}
+        if by_order.get(2) is not None and by_order[2][2] is not True:
+            failures.append(f"订单 2（amount=20）应通过校验：{by_order[2]}")
+        if by_order.get(4) is not None:
+            if by_order[4][2] is not False:
+                failures.append(f"订单 4（amount=30）应被标记违规：{by_order[4]}")
+            if f"应 ≤ {QA_AMOUNT_CAP}" not in (by_order[4][3] or ""):
+                failures.append(f"违规原因不可读：{by_order[4][3]!r}")
+
     if args.cleanup:
         cleanup(engine, sf)
         print("cleaned up（指标演示数据集保留，要清请跑 seed_metrics_demo.py --cleanup）")
@@ -299,7 +372,7 @@ def main() -> int:
         for item in failures:
             print(f"!! {item}")
         return 2
-    return 0 if run.status == "ok" and margin_run.status == "ok" else 1
+    return 0 if run.status == "ok" and margin_run.status == "ok" and qa_run.status == "ok" else 1
 
 
 if __name__ == "__main__":
