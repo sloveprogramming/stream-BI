@@ -4,7 +4,7 @@
 用完把它自己造出来的东西（表、流程、授权、生成文件）全部清干净 ——
 本地库是共用的，不清理会污染后续测试。
 """
-import tempfile
+import shutil
 import uuid
 from pathlib import Path
 
@@ -23,7 +23,12 @@ from app.models import (
 )
 
 SOURCE_TABLE = "ods.flow_src"
+# 真实 dbt 项目的产物目录（只读，不在这里写；留在这是为了让旧路径仍可清理）
 GENERATED_DIR = Path(__file__).resolve().parents[2] / "dbt" / "models" / "generated"
+# 测试实际落盘的位置：仓库根下可写的影子 dbt 项目（见 dbt_shadow.py）
+SHADOW_GENERATED_DIR = (
+    Path(__file__).resolve().parents[3] / ".testwork" / "dbt" / "models" / "generated"
+)
 
 
 @pytest.fixture
@@ -32,13 +37,24 @@ def workdir():
 
     不用 pytest 的 `tmp_path`：它的 basetemp 在系统 %TEMP% 下，
     本机（沙箱）对那个目录没有清理权限，fixture 初始化阶段就会
-    `PermissionError: [WinError 5]`。放项目内既避开权限问题，
-    也方便用 .gitignore 统一忽略。
+    `PermissionError: [WinError 5]`。
+
+    也不用 `tempfile.TemporaryDirectory`：它在 Windows 上创建目录后要
+    `os.chmod` + `os.open(O_RDONLY)` 做权限收敛，本机沙箱会拦下这一步
+    （`PermissionError: [WinError 5]`，目录其实已经建好了）。
+    所以这里用 `uuid` 拼唯一名 + 手动 `shutil.rmtree` 清理，绕开那段逻辑。
+
+    落点选**仓库根下的 `.testwork`**：本机沙箱禁止在 `backend/` 子树内
+    创建新目录（`mkdtemp` 会在那里无限重试直到挂死），仓库根可以。
     """
-    root = Path(__file__).resolve().parents[1] / ".tmp"
+    root = Path(__file__).resolve().parents[3] / ".testwork"
     root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=root) as path:
-        yield Path(path)
+    path = root / f"wd_{uuid.uuid4().hex[:12]}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture
@@ -135,12 +151,14 @@ def flow_env(pg_session_factory, pg_engine):
         s.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
         s.commit()
 
-    for path in GENERATED_DIR.glob(f"flowt_{suffix}*"):
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            # 清理失败不能掩盖测试结果；残留文件是 .gitignore 掉的，无害
-            pass
+    # 清理两处产物：影子项目（测试实际写这里）与真实项目（历史残留）
+    for base in (SHADOW_GENERATED_DIR, GENERATED_DIR):
+        for path in base.glob(f"flowt_{suffix}*"):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                # 清理失败不能掩盖测试结果；残留文件是 .gitignore 掉的，无害
+                pass
 
 
 @pytest.fixture

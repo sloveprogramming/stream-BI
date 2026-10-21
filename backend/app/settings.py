@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-me"
     jwt_expire_hours: int = 12
     export_max_rows: int = 50000
+    # 报表/导出落盘目录。空 = 默认 backend/exports。
+    # 可覆盖是为了让测试与受限环境（目录只读）能指到可写位置。
+    export_dir: str = ""
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-chat"

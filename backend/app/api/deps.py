@@ -76,13 +76,22 @@ def get_web_principal(request: Request, ctx: Context = Depends(get_ctx)) -> WebP
 class AnyPrincipal:
     user: object
     api_key: object | None = None
+    # 租户上下文：所有查询路径用它过滤（漏一处就是跨租户泄露，
+    # 所以放在 principal 层统一注入，不在每个 API 里手写）
+    tenant: object | None = None
 
 
 def get_any_principal(request: Request, ctx: Context = Depends(get_ctx)) -> AnyPrincipal:
     """JWT（Web）与 API Key 双通道统一入口。"""
+    from app.tenancy import resolve_tenant
+
     if request.headers.get("Authorization", "").startswith("Bearer "):
         wp = get_web_principal(request, ctx)
-        return AnyPrincipal(user=wp.user)
+        with ctx.session_factory() as session:
+            tenant = resolve_tenant(request, wp.user, session)
+        return AnyPrincipal(user=wp.user, tenant=tenant)
     p = get_principal(request, ctx)
-    return AnyPrincipal(user=p.user, api_key=p.api_key)
+    with ctx.session_factory() as session:
+        tenant = resolve_tenant(request, p.user, session)
+    return AnyPrincipal(user=p.user, api_key=p.api_key, tenant=tenant)
 

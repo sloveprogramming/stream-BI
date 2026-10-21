@@ -19,6 +19,32 @@ type Msg = {
   error?: string
   loading?: boolean
   api?: any
+  confidence?: { level: 'high' | 'medium' | 'low'; reasons: string[] }
+}
+
+/** 置信度徽标：让用户知道这个数有多可信，悬停看原因。 */
+function ConfidenceBadge({ conf }: { conf?: Msg['confidence'] }) {
+  if (!conf) return null
+  const meta = {
+    high: { color: 'success', text: '高可信' },
+    medium: { color: 'warning', text: '中等可信' },
+    low: { color: 'error', text: '低可信' },
+  }[conf.level] ?? { color: 'default', text: conf.level }
+  return (
+    <Tooltip
+      title={
+        <div>
+          {conf.reasons?.length
+            ? conf.reasons.map((r, i) => <div key={i}>· {r}</div>)
+            : '没有更多说明'}
+        </div>
+      }
+    >
+      <Tag color={meta.color} style={{ cursor: 'help' }}>
+        {meta.text}
+      </Tag>
+    </Tooltip>
+  )
 }
 
 const API_KEY_PLACEHOLDER = '<key_id>.<secret>'
@@ -68,20 +94,7 @@ function CodeBlock({ code }: { code: string }) {
       >
         复制
       </Button>
-      <pre
-        style={{
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-          margin: 0,
-          fontSize: 12,
-          background: '#f6f6f6',
-          padding: 12,
-          paddingTop: 34,
-          borderRadius: 6,
-        }}
-      >
-        {code}
-      </pre>
+      <pre className="bisql-code">{code}</pre>
     </div>
   )
 }
@@ -311,6 +324,8 @@ export default function DataAssistant() {
           }))
         else if (ev.type === 'error') patchLast((m) => ({ ...m, error: ev.message, loading: false }))
         else if (ev.type === 'api') patchLast((m) => ({ ...m, api: ev.api }))
+        else if (ev.type === 'confidence')
+          patchLast((m) => ({ ...m, confidence: { level: ev.level, reasons: ev.reasons ?? [] } }))
         else if (ev.type === 'done') patchLast((m) => ({ ...m, loading: false }))
         scrollToBottom()
       }
@@ -366,7 +381,14 @@ export default function DataAssistant() {
     >
       <Row gutter={12} style={{ flex: 1, minHeight: 0 }}>
         <Col xs={0} md={7} lg={6} style={{ height: '100%' }}>
-          <div style={{ height: '100%', overflowY: 'auto', borderRight: '1px solid #f0f0f0', paddingRight: 8 }}>
+          <div
+            style={{
+              height: '100%',
+              overflowY: 'auto',
+              borderRight: '1px solid var(--neutral-border)',
+              paddingRight: 8,
+            }}
+          >
             <List
               size="small"
               dataSource={sessions}
@@ -375,8 +397,8 @@ export default function DataAssistant() {
                 <List.Item
                   style={{
                     cursor: 'pointer',
-                    background: s.id === activeId ? '#e6f4ff' : undefined,
-                    borderRadius: 6,
+                    background: s.id === activeId ? 'var(--brand-primary-bg)' : undefined,
+                    borderRadius: 'var(--radius-sm)',
                     paddingInline: 8,
                   }}
                   onClick={() => setActiveId(s.id)}
@@ -412,7 +434,15 @@ export default function DataAssistant() {
         <Col xs={24} md={17} lg={18} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div
             ref={listRef}
-            style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#fafafa', borderRadius: 8, padding: 12 }}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              background: 'var(--neutral-surface-alt)',
+              border: '1px solid var(--neutral-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 12,
+            }}
           >
             {messages.length === 0 && (
               <Typography.Paragraph type="secondary">
@@ -426,7 +456,10 @@ export default function DataAssistant() {
                     size="small"
                     style={{
                       maxWidth: '90%',
-                      background: m.role === 'user' ? '#e6f4ff' : '#fff',
+                      background:
+                        m.role === 'user' ? 'var(--brand-primary-bg)' : 'var(--neutral-surface)',
+                      borderColor:
+                        m.role === 'user' ? 'var(--brand-primary-border)' : undefined,
                       overflow: 'hidden',
                     }}
                   >
@@ -435,6 +468,7 @@ export default function DataAssistant() {
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                         {m.role === 'user' ? '我' : '数据助手'}
                       </Typography.Text>
+                      {m.role === 'assistant' && <ConfidenceBadge conf={m.confidence} />}
                     </Space>
                     {m.role === 'user' ? (
                       <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>

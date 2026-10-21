@@ -116,11 +116,15 @@ def _run(goal: str, principal: AnyPrincipal, ctx: Context):
     if clarification and status == "ok":
         status = "needs_clarification"
         answer = answer or str(clarification.get("question") or "")
+    plan = final.get("plan") or []
+    conf = _confidence_for(plan, final)
     yield _frame({
         "type": "answer",
         "answer": answer,
         "status": status,
         "clarification": clarification,
+        # 置信度随回答一起给：用户要知道这个数有多可信（见 assistant/confidence.py）
+        "confidence": conf.to_dict(),
         "plan": [
             {
                 "question": s.get("question"),
@@ -129,7 +133,7 @@ def _run(goal: str, principal: AnyPrincipal, ctx: Context):
                 "row_count": s.get("row_count", 0),
                 "error": s.get("error", ""),
             }
-            for s in (final.get("plan") or [])
+            for s in plan
         ],
         "tool_calls": final.get("tool_calls", 0),
     })
@@ -138,12 +142,32 @@ def _run(goal: str, principal: AnyPrincipal, ctx: Context):
             run_id=run_id,
             status=status,
             answer=answer,
-            plan=final.get("plan") or [],
+            plan=plan,
             steps=final.get("steps") or [],
             tool_calls=final.get("tool_calls", 0),
             elapsed_ms=int((time.perf_counter() - started) * 1000),
+            confidence=conf.level,
+            confidence_reasons=list(conf.reasons),
         ),
         agent_ctx,
         goal,
     )
     yield _frame({"type": "done"})
+
+
+def _confidence_for(plan: list, final: dict):
+    """判定置信度。与 agent.run_agent 同一套信号，避免两条路径给出不同口径。"""
+    from app.assistant.confidence import assess, collect_signals_from_plan
+
+    metric_hit = any(bool(s.get("metric_hit")) for s in plan)
+    fewshot_hit = any(bool(s.get("fewshot_hit")) for s in plan)
+    verdict = final.get("verdict") or {}
+    reflect_enough = verdict.get("enough") if "enough" in verdict else None
+    return assess(
+        collect_signals_from_plan(
+            plan,
+            metric_hit=metric_hit,
+            fewshot_hit=fewshot_hit,
+            reflect_enough=reflect_enough,
+        )
+    )

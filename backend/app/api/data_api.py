@@ -16,9 +16,10 @@ def list_datasets(
     ctx: Context = Depends(get_ctx),
 ):
     user = principal.user
+    tenant_id = principal.tenant.tenant_id if principal.tenant else None
     with ctx.session_factory() as session:
-        # 管理员可见全部数据集（含自动发现的新表），普通用户仅见已授权的
-        rows = query_visible_datasets(session, user).all()
+        # 管理员可见租户内全部数据集（含自动发现的新表），普通用户仅见已授权的
+        rows = query_visible_datasets(session, user, tenant_id).all()
         return [
             {
                 "id": d.id,
@@ -26,6 +27,9 @@ def list_datasets(
                 "title": d.title,
                 "description": d.description,
                 "columns": d.columns,
+                # 中文列名：界面上直接显示中文，业务人员不必看 amount 猜"金额"。
+                # 来源是 ERP 侧回填的列注释（erp_autosync），或数据集自带的。
+                "column_comments": d.column_comments or {},
                 "column_count": len(d.columns or []),
             }
             for d in rows
@@ -46,8 +50,13 @@ def query_rows(
         k: v for k, v in request.query_params.items() if k not in ("limit", "offset")
     }
     with ctx.session_factory() as session:
-        ds = session.query(Dataset).filter_by(name=name, enabled=True).first()
+        tenant_id = principal.tenant.tenant_id if principal.tenant else None
+        q = session.query(Dataset).filter_by(name=name, enabled=True)
+        if tenant_id is not None:
+            q = q.filter(Dataset.tenant_id == tenant_id)
+        ds = q.first()
         if ds is None:
+            # 不区分"不存在"与"别的租户"：避免用 404/403 探测别人有哪些数据集
             raise HTTPException(status_code=404, detail="dataset not found")
         grant = resolve_grant(session, principal.user, ds.id)
         if grant is None:

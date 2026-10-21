@@ -20,15 +20,17 @@ _VALUE_MAX_LEN = 50
 _MAX_COMMENTED_COLUMNS = 40
 
 
-def build_schema_context(session_factory, pg_engine, user) -> dict:
-    """只收集该用户有权限的数据集；返回 tables 列表与渲染好的 prompt。"""
+def build_schema_context(session_factory, pg_engine, user, tenant_id: int | None = None) -> dict:
+    """只收集该用户有权限的数据集；返回 tables 列表与渲染好的 prompt。
+
+    `tenant_id` 非空时先按租户收窄（避免全表扫再逐条判授权）。
+    逐条的 `resolve_grant` 仍会做租户校验 —— 两层都拦，漏一层还有另一层。
+    """
     with session_factory() as session:
-        datasets = (
-            session.query(Dataset)
-            .filter_by(enabled=True)
-            .order_by(Dataset.id)
-            .all()
-        )
+        q = session.query(Dataset).filter_by(enabled=True)
+        if tenant_id is not None:
+            q = q.filter(Dataset.tenant_id == tenant_id)
+        datasets = q.order_by(Dataset.id).all()
         tables = []
         for ds in datasets:
             grant = resolve_grant(session, user, ds.id)

@@ -10,6 +10,8 @@ __pycache__/
 backend/.venv/
 # 测试用的项目内临时目录（pytest 的 tmp_path 在本机不可用，见 tests/unit/conftest.py）
 backend/tests/.tmp/
+# 新落点：backend/ 子树内沙箱禁止建目录，fixture 迁到仓库根的 .testwork
+.testwork/
 
 # ---- Node ----
 node_modules/
@@ -40,3 +42,11 @@ backend/dbt/models/generated/*.yml
 
 # ---- 与本中台无关的独立子项目 ----
 旺店通 - 副本/
+
+# ---- 含真实凭据的脚本（绝不入库，改用环境变量） ----
+backend/scripts/setup_deepseek.py
+
+# ---- 本地临时/无关文件 ----
+backend/_import_probe2.py
+crocodile-bicycle.html
+tmpqxocvmjn/

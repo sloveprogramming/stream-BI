@@ -1,3 +1,4 @@
+import os
 import uuid
 from pathlib import Path
 
@@ -21,13 +22,35 @@ from app.models import (
     User,
 )
 from app.reports.scheduler import refresh_report_jobs
-from app.reports.service import generate_report_file
+from app.reports.service import exports_dir, generate_report_file
+
+# 导出落盘目录：默认 backend/exports 在本机沙箱里只读（写文件被拒），
+# 指到仓库根的可写目录。`generate_report_file` 走 `get_settings()`，
+# 所以必须用环境变量而不是只改 FakeSettings —— 两条路径要落同一个地方，
+# 否则 API 下载会找不到 service 生成的文件。
+_TEST_EXPORT_DIR = Path(__file__).resolve().parents[3] / ".testwork" / "exports"
+os.environ["BISQL_EXPORT_DIR"] = str(_TEST_EXPORT_DIR)
+
+
+def _reset_settings_cache():
+    """`get_settings` 带 lru_cache：环境变量必须在缓存建立前生效。
+
+    本模块顶部已设好环境变量；这里再清一次缓存，防止别的测试模块
+    先调用过 `get_settings()` 把"没有 export_dir"的结果缓存住。
+    """
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+
+
+_reset_settings_cache()
 
 
 class FakeSettings:
     rate_limit_per_minute = 1000
     rate_limit_per_day = 100000
     export_max_rows = 50000
+    export_dir = str(_TEST_EXPORT_DIR)
 
 
 @pytest.fixture
@@ -115,7 +138,7 @@ def test_service_generates_scoped_file(env, pg_engine):
         run = generate_report_file(task)
         assert run.status == "success"
         assert run.row_count == 1  # 只有华东
-        path = Path("exports") / run.file_name
+        path = exports_dir() / run.file_name
         assert path.exists()
         from openpyxl import load_workbook
 
@@ -166,7 +189,7 @@ def test_report_task_api_and_download(env):
     # 管理员（非 owner）不能下载
     r = client.get(f"/api/v1/my/reports/{run_id}/download", headers=headers)
     assert r.status_code == 403
-    Path("exports", file_name).unlink()
+    (exports_dir() / file_name).unlink()
 
 
 def test_refresh_report_jobs_registers_and_removes(env, pg_session_factory):

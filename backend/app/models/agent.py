@@ -36,6 +36,11 @@ class AgentRun(Base):
     trigger: Mapped[str] = mapped_column(String(16), default="chat")  # chat/monitor/mcp
     status: Mapped[str] = mapped_column(String(16), default="running")  # running/ok/failed/aborted
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 回答置信度（high/medium/low）+ 机器可读的原因列表。
+    # 为什么不让模型自评：它正是"自信地给出一个错的数"的来源。
+    # 判定全部用确定性信号（SQL 重试/few-shot 兜底/指标命中/证据行数），可解释、可单测。
+    confidence: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    confidence_reasons: Mapped[list | None] = mapped_column(JSON, nullable=True)
     step_count: Mapped[int] = mapped_column(Integer, default=0)
     tool_calls: Mapped[int] = mapped_column(Integer, default=0)
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)

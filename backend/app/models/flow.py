@@ -51,6 +51,10 @@ class DataFlow(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True)
     title: Mapped[str | None] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(String(512))
+    # 归属租户；流程列表与产物可见性都按它隔离
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id"), nullable=True, index=True
+    )
     # 取数行权的归属主体：跑流程时按这个用户的授权裁剪源数据
     owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     current_version: Mapped[int] = mapped_column(Integer, default=1)

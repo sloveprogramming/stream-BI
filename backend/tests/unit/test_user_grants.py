@@ -99,6 +99,12 @@ def test_user_direct_grant_lifecycle(api_client, pg_session_factory, pg_engine):
                 s.delete(u)
             adm = s.query(User).filter_by(username=f"gadm_{suffix}").first()
             if adm is not None:
+                # 授权变更会写审计（action=grant.create/revoke），
+                # 这些日志的 user_id 指向管理员本人，必须先清才能删用户
+                s.query(AuditLog).filter(
+                    AuditLog.user_id == adm.id,
+                    AuditLog.action.in_(["grant.create", "grant.revoke", "grant.approve"]),
+                ).delete(synchronize_session=False)
                 s.query(ApiKey).filter_by(user_id=adm.id).delete()
                 s.delete(adm)
             s.commit()

@@ -1,6 +1,312 @@
+/**
+ * 全局样式 —— 承载设计令牌，让颜色/间距/动效在全站一致。
+ *
+ * 设计系统来源：ui-ux-pro-max skill 生成的 Data-Dense Dashboard
+ * （--variance 6 --motion 5 --density 8）。
+ *
+ * 这里只处理 antd 覆盖不到的全局层；页面自身的样式归组件管。
+ */
+
+/* Fira Code（标题/数字）+ Fira Sans（正文）—— 数据与技术调性 */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
 :root {
-  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 与 src/theme/tokens.ts 一一对应 */
+  --brand-primary: #1e40af;
+  --brand-primary-hover: #1d3fa0;
+  --brand-primary-bg: #eff6ff;
+  --brand-primary-border: #bfdbfe;
+  --brand-accent: #d97706;
+  --brand-accent-bg: #fffbeb;
+  --brand-accent-border: #fde68a;
+
+  --neutral-bg: #f8fafc;
+  --neutral-surface: #ffffff;
+  --neutral-surface-alt: #f1f5f9;
+  --neutral-border: #dbeafe;
+  --neutral-border-strong: #e2e8f0;
+  --neutral-text: #0f172a;
+  --neutral-text-secondary: #475569;
+  --neutral-text-tertiary: #94a3b8;
+
+  --semantic-success: #16a34a;
+  --semantic-success-bg: #f0fdf4;
+  --semantic-warning: #d97706;
+  --semantic-warning-bg: #fffbeb;
+  --semantic-error: #dc2626;
+  --semantic-error-bg: #fef2f2;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-hover: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-pop: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --font-mono: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+
+  /* 动效时长：Checklist 要求 150-300ms */
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 300ms;
 }
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  font-family: 'Fira Sans', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: var(--neutral-text);
+  background: var(--neutral-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------- 滚动条：密集布局下要更细 ---------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+.bisql-sider ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+}
+.bisql-sider ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* ---------- 文本选中：用品牌色 ---------- */
+::selection {
+  background: var(--brand-primary-bg);
+  color: var(--brand-primary);
+}
+
+/* ---------- 等宽：SQL、ID、数字。数字用 tabular-nums 保证列对齐 ---------- */
+code,
+kbd,
+pre,
+samp,
+.bisql-mono {
+  font-family: var(--font-mono);
+}
+
+.bisql-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 标题用等宽，强化"数据/技术"识别度 ---------- */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Fira Code', 'Fira Sans', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- 焦点态：Checklist 要求键盘导航可见 ---------- */
+:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 1px;
+}
+
+/* ---------- 侧边栏 ---------- */
+.bisql-sider {
+  background: #0f172a !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.bisql-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+
+.bisql-brand__mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-family: 'Fira Code', monospace;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.bisql-brand__text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.bisql-brand__title {
+  color: #fff;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bisql-brand__sub {
+  color: rgba(148, 163, 184, 0.65);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* ---------- 顶栏 ---------- */
+.bisql-header {
+  border-bottom: 1px solid var(--neutral-border-strong);
+}
+
+.bisql-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--brand-primary-bg);
+  color: var(--brand-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'Fira Code', monospace;
+  flex-shrink: 0;
+}
+
+/* ---------- 页面容器：密集布局用更紧的内边距 ---------- */
+.bisql-page {
+  padding: 14px 16px 24px;
+}
+
+/* ---------- KPI 卡片：数字大而醒目，供仪表盘扫读 ---------- */
+.bisql-kpi {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 100%;
+}
+
+.bisql-kpi__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.bisql-kpi__value {
+  font-family: 'Fira Code', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--neutral-text);
+}
+
+.bisql-kpi__label {
+  font-size: 12px;
+  color: var(--neutral-text-secondary);
+  cursor: help;
+}
+
+/* ---------- 卡片悬浮：Checklist 要求 150-300ms 过渡 ---------- */
+.bisql-card-hover {
+  transition: box-shadow var(--motion-base) ease, transform var(--motion-base) ease;
+}
+.bisql-card-hover:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+/* 可点击元素统一 pointer（Checklist 明确要求） */
+a,
+button,
+[role='button'],
+.ant-card-hoverable {
+  cursor: pointer;
+}
+
+/* ---------- 代码块 ---------- */
+.bisql-code {
+  position: relative;
+  background: var(--neutral-surface-alt);
+  border: 1px solid var(--neutral-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  padding-top: 34px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* ---------- 字段 chip：密集布局下更小 ---------- */
+.bisql-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--neutral-surface-alt);
+  border: 1px solid var(--neutral-border-strong);
+  color: var(--neutral-text-secondary);
+  white-space: nowrap;
+}
+
+/* ---------- 数据集卡顶部色条 ---------- */
+.bisql-card-bar {
+  height: 2px;
+  opacity: 0.9;
+}
+
+/* ---------- 响应式：Checklist 要求覆盖 375/768/1024/1440 ---------- */
+@media (max-width: 768px) {
+  .bisql-page {
+    padding: 10px;
+  }
+}
+
+/* ---------- 尊重"减少动画"偏好（Checklist 要求） ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .bisql-card-hover:hover {
+    transform: none;
+  }
 }

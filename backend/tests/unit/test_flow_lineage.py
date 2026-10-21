@@ -1,4 +1,4 @@
-﻿"""血缘：事件合规、成功/失败的 emit 语义、双向追溯（含环与深度）。
+"""血缘：事件合规、成功/失败的 emit 语义、双向追溯（含环与深度）。
 
 追溯测试直接塞边数据（不走 dbt）—— 追溯逻辑只关心「流程输入 → 产物」与
 「数据集 → 物理源」两类边的形状，与边是怎么跑出来的无关。
@@ -21,9 +21,12 @@ from app.models import (
 )
 from app.flow.runner import DbtRunResult, run_flow
 
+from dbt_shadow import shadow_dbt_project
+
 
 class _Settings:
-    flow_dbt_project_dir = "dbt"
+    # 落盘落到影子项目：真实 backend/dbt/models/generated 在本机沙箱里只读
+    flow_dbt_project_dir = shadow_dbt_project()
     flow_generated_subdir = "models/generated"
     flow_dbt_target = "prod"
     flow_max_nodes = 50

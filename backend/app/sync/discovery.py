@@ -4,13 +4,17 @@ ERP 定时同步会按需在 `ods` 模式建表。本模块扫描 information_sc
 把尚未登记为 Dataset 的表自动注册，使前端在几秒内即可看到新数据集。
 
 可见性：自动注册的数据集默认对所有具备授权的用户开放查询；管理员可见全部数据集。
+
+租户：自动发现是**后台任务**，没有"当前请求"可借，因此固定归属
+`default` 租户（与存量数据一致）。若将来要按租户隔离自动发现，
+应由调用方显式传 tenant_id，不要在这里猜。
 """
 import logging
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.models import Dataset
+from app.models import DEFAULT_TENANT_SLUG, Dataset, Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,12 @@ def discover_datasets(session_factory, pg_engine: Engine, schema: str = "ods") -
 
     created: list[dict] = []
     with session_factory() as session:
+        # 自动发现归属 default 租户（后台任务没有请求上下文，见模块 docstring）
+        default_tenant = (
+            session.query(Tenant).filter_by(slug=DEFAULT_TENANT_SLUG).first()
+        )
+        default_tenant_id = default_tenant.id if default_tenant else None
+
         existing_rows = session.query(Dataset).all()
         existing_tables = {d.source_table for d in existing_rows}
         used_names = {d.name for d in existing_rows}
@@ -85,6 +95,7 @@ def discover_datasets(session_factory, pg_engine: Engine, schema: str = "ods") -
                     pk_columns=pk,
                     columns=list(columns),
                     description="ERP 同步自动发现",
+                    tenant_id=default_tenant_id,
                 )
             )
             used_names.add(name)

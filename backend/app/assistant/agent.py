@@ -54,6 +54,19 @@ def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
+def _metric_hit(agent_ctx, question: str) -> bool:
+    """问题里有没有一个词能命中指标字典。
+
+    这是"口径有依据"的确定性信号：命中了说明模型拿到的是字典里的公式，
+    没命中说明它按字面理解自己编了口径 —— 后者要降置信度。
+    字典加载失败时返回 False（宁可真话少说，不给虚假的高置信度）。
+    """
+    try:
+        return bool(agent_ctx.metrics().search(question))
+    except Exception:  # noqa: BLE001 —— 字典不可用不该让问数失败
+        return False
+
+
 # ---------------------------------------------------------------- 依赖注入
 
 @dataclass
@@ -252,6 +265,9 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
             examples = tools.load_few_shots(
                 agent_ctx.session_factory, target["question"], agent_ctx.user
             )
+            # 记录"这次生成有没有用到人工样例" —— 置信度判定要读（见 confidence.py）。
+            # 记在闭包的非局部变量上，随本次 act 一起回传。
+            found["fewshot"] = bool(examples)
             prompt = user_prompt(
                 schema["prompt"],
                 target["question"],
@@ -267,9 +283,12 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
             )
 
         # 生成 → 执行 → 体检 → 不合格就把原因喂回去改写（有界），见 verify 模块
+        found: dict = {"fewshot": False, "metric": False}
         attempt = query_with_retry(
             generate, execute, max_attempts=agent_ctx.max_sql_attempts
         )
+        # 口径是否命中指标字典：用"问题里的词能在字典里检索到"判定（确定性，不交给模型）
+        found["metric"] = _metric_hit(agent_ctx, target["question"])
         plan = _update_plan(
             state["plan"],
             target["id"],
@@ -279,6 +298,10 @@ def build_graph(agent_ctx: AgentContext, llm: LlmAdapter | None = None):
             rows=[list(row) for row in attempt.rows[: agent_ctx.evidence_rows]],
             row_count=len(attempt.rows),
             error="" if attempt.ok else attempt.problem,
+            # 置信度判定要读这两个：改写了几次才通过、口径/样例有没有依据
+            attempts=attempt.attempts,
+            fewshot_hit=found["fewshot"],
+            metric_hit=found["metric"],
         )
         return {
             "plan": plan,
@@ -380,6 +403,9 @@ class AgentResult:
     elapsed_ms: int = 0
     error: str = ""
     clarification: dict = field(default_factory=dict)
+    # 回答置信度：high/medium/low + 机器可读的 reasons（见 confidence.py）
+    confidence: str = ""
+    confidence_reasons: list = field(default_factory=list)
 
 
 def _merge(target: dict, update: dict) -> None:
@@ -429,20 +455,42 @@ def run_agent(goal: str, agent_ctx: AgentContext, llm: LlmAdapter | None = None,
         status = "needs_clarification"
         answer = answer or str(clarification.get("question") or "")
 
+    plan = final.get("plan") or []
+    conf = _confidence_for(plan, final)
     result = AgentResult(
         run_id=run_id,
         status=status,
         answer=answer,
-        plan=final.get("plan") or [],
+        plan=plan,
         steps=final.get("steps") or [],
         tool_calls=final.get("tool_calls", 0),
         elapsed_ms=_ms(started),
         error=error,
         clarification=clarification,
+        confidence=conf.level,
+        confidence_reasons=list(conf.reasons),
     )
     if persist:
         save_result(result, agent_ctx, goal)
     return result
+
+
+def _confidence_for(plan: list, final: dict):
+    """从 plan 采集信号并判定置信度。口径/样例命中按"任一子问题命中"算。"""
+    from app.assistant.confidence import assess, collect_signals_from_plan
+
+    metric_hit = any(bool(s.get("metric_hit")) for s in plan)
+    fewshot_hit = any(bool(s.get("fewshot_hit")) for s in plan)
+    verdict = final.get("verdict") or {}
+    # reflect 只在真跑过（有 enough 键）时才算数
+    reflect_enough = verdict.get("enough") if "enough" in verdict else None
+    signals = collect_signals_from_plan(
+        plan,
+        metric_hit=metric_hit,
+        fewshot_hit=fewshot_hit,
+        reflect_enough=reflect_enough,
+    )
+    return assess(signals)
 
 
 def save_result(result: AgentResult, agent_ctx: AgentContext, goal: str) -> None:
@@ -458,6 +506,8 @@ def save_result(result: AgentResult, agent_ctx: AgentContext, goal: str) -> None
                 trigger="chat",
                 status=result.status,
                 answer=result.answer or None,
+                confidence=result.confidence or None,
+                confidence_reasons=result.confidence_reasons or None,
                 step_count=len(result.steps),
                 tool_calls=result.tool_calls,
                 elapsed_ms=result.elapsed_ms,

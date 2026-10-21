@@ -93,10 +93,19 @@ def build_api_recipe(sql: str, tables: list[dict]) -> dict[str, Any] | None:
     if len(used) != 1:
         return _not_callable("引用了多张表")
     table = used[0]
-    full = f"{table.db}.{table.name}" if table.db else table.name
-    spec = next((t for t in tables if t["source_table"] == full), None)
+    # 与闸门/重写器同一套解析：模型可能写数据集名，也可能写物理表名
+    from app.assistant.table_refs import AmbiguousTableError, build_alias_map, normalize
+
+    try:
+        alias_map = build_alias_map(tables)
+    except AmbiguousTableError as exc:
+        return _not_callable(str(exc))
+    key = normalize(f"{table.db}.{table.name}") if table.db else normalize(table.name)
+    source = alias_map.get(key)
+    spec = next((t for t in tables if t["source_table"] == source), None)
     if spec is None:
         return _not_callable("未能定位到已注册的数据集")
+    full = spec["source_table"]
 
     filters: dict[str, str] = {}
     where = expr.find(exp.Where)

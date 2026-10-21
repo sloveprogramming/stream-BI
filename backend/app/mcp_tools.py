@@ -13,11 +13,22 @@ def _grant_for(session, principal, ds: Dataset):
     return grant
 
 
-def _dataset(session, name: str) -> Dataset:
-    ds = session.query(Dataset).filter_by(name=name, enabled=True).first()
+def _dataset(session, name: str, tenant_id: int | None = None) -> Dataset:
+    """按名字取数据集。tenant_id 非空时限制在本租户内。
+
+    跨租户与"不存在"返回同一个错误：不通过错误类型差异泄露别人有哪些数据集。
+    """
+    q = session.query(Dataset).filter_by(name=name, enabled=True)
+    if tenant_id is not None:
+        q = q.filter(Dataset.tenant_id == tenant_id)
+    ds = q.first()
     if ds is None:
         raise ValueError(f"数据集不存在或未启用: {name}")
     return ds
+
+
+def _tenant_of(principal) -> int | None:
+    return getattr(getattr(principal, "tenant", None), "tenant_id", None)
 
 
 def mcp_list_datasets(principal) -> list[dict]:
@@ -29,7 +40,7 @@ def mcp_list_datasets(principal) -> list[dict]:
     sf = make_session_factory(engine)
     with sf() as session:
         # 与 Web/API 通道共用同一可见性口径：管理员全量，其余为「直授 ∪ 角色授权」
-        rows = query_visible_datasets(session, principal.user).all()
+        rows = query_visible_datasets(session, principal.user, _tenant_of(principal)).all()
         return [
             {
                 "name": d.name,
@@ -48,7 +59,7 @@ def mcp_describe_dataset(principal, name: str) -> dict:
     engine = make_engine(settings.database_url)
     sf = make_session_factory(engine)
     with sf() as session:
-        ds = _dataset(session, name)
+        ds = _dataset(session, name, _tenant_of(principal))
         grant = _grant_for(session, principal, ds)
         session.add(
             AuditLog(
@@ -79,7 +90,7 @@ def mcp_query_dataset(principal, name: str, filters: dict | None, limit: int = 5
     sf = make_session_factory(engine)
     filters = filters or {}
     with sf() as session:
-        ds = _dataset(session, name)
+        ds = _dataset(session, name, _tenant_of(principal))
         grant = _grant_for(session, principal, ds)
         try:
             sql, params = build_scoped_sql(ds, grant, filters, min(limit, 200), 0)

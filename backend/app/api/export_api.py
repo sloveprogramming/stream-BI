@@ -42,8 +42,12 @@ def export_rows(
 
     started = time.perf_counter()
     max_rows = ctx.settings.export_max_rows
+    tenant_id = getattr(principal.tenant, "tenant_id", None)
     with ctx.session_factory() as session:
-        ds = session.query(Dataset).filter_by(name=name, enabled=True).first()
+        q = session.query(Dataset).filter_by(name=name, enabled=True)
+        if tenant_id is not None:
+            q = q.filter(Dataset.tenant_id == tenant_id)
+        ds = q.first()
         if ds is None:
             raise HTTPException(status_code=404, detail="dataset not found")
         grant = _grant_for(session, principal, ds)

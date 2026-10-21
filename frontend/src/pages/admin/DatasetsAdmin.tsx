@@ -385,8 +385,8 @@ export default function DatasetsAdmin() {
                   style={{
                     maxHeight: 180,
                     overflowY: 'auto',
-                    border: '1px solid #f0f0f0',
-                    borderRadius: 6,
+                    border: '1px solid var(--neutral-border)',
+                    borderRadius: 'var(--radius-sm)',
                     padding: '8px 10px',
                   }}
                 >

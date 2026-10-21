@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>seed</title>
+</head>
+<body>
+<script>
+  // 把认证信息写进 localStorage，然后跳到目标页面。
+  // 仅用于无头截图预览，不属于应用代码。
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || '';
+  const to = params.get('to') || '/';
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify({
+    id: 415, username: 'admin', display_name: '管理员',
+    is_admin: true, is_superadmin: false,
+  }));
+  location.replace(to);
+</script>
+</body>
+</html>

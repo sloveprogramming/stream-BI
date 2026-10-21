@@ -324,7 +324,9 @@ export default function SchemaForm({
   const keys = Object.keys(properties)
 
   if (!keys.length) {
-    return <span style={{ color: '#999' }}>这个算子没有可配置参数</span>
+    return (
+      <span style={{ color: 'var(--neutral-text-tertiary)' }}>这个算子没有可配置参数</span>
+    )
   }
 
   return (

@@ -15,11 +15,14 @@ from app.flow.dsl import FlowDSL, FlowEdge, FlowNode, FlowOutput
 from app.flow.runner import DbtRunResult, resolve_project_dir, run_flow
 from app.models import Dataset, DatasetGrant, FlowRun
 
+from dbt_shadow import shadow_dbt_project
+
 ROW_RULE = {"field": "warehouse", "op": "eq", "value": "德清"}
 
 
 class _Settings:
-    flow_dbt_project_dir = "dbt"
+    # 落盘落到影子项目：真实 backend/dbt/models/generated 在本机沙箱里只读
+    flow_dbt_project_dir = shadow_dbt_project()
     flow_generated_subdir = "models/generated"
     flow_dbt_target = "prod"
     flow_max_nodes = 50
@@ -245,7 +248,7 @@ def test_generated_files_land_in_generated_dir(flow_env, load_user):
     assert len(paths) == 2
     assert any(p.endswith(".sql") for p in paths)
     assert any(p.endswith(".yml") for p in paths)
-    generated_dir = resolve_project_dir("dbt") / "models" / "generated"
+    generated_dir = resolve_project_dir(_Settings.flow_dbt_project_dir) / "models" / "generated"
     for p in paths:
         assert generated_dir in Path(p).parents
         assert f"flowt_{env['suffix']}" in Path(p).name

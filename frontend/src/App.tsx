@@ -13,6 +13,12 @@ import AdminDatasets from './pages/admin/DatasetsAdmin'
 import AdminSync from './pages/admin/SyncTasks'
 import AdminAudit from './pages/admin/AuditLogs'
 import AdminProviders from './pages/admin/ModelProviders'
+import AdminGrantRequests from './pages/admin/GrantRequests'
+import AdminQuality from './pages/admin/QualityMonitor'
+import AdminMetricLineage from './pages/admin/MetricLineage'
+import AdminTenants from './pages/admin/Tenants'
+import OpsDashboard from './pages/dashboards/OpsDashboard'
+import SalesDashboard from './pages/dashboards/SalesDashboard'
 
 function RequireAuth({ children, admin = false }: { children: React.ReactNode; admin?: boolean }) {
   const token = localStorage.getItem('token')
@@ -35,6 +41,8 @@ export default function App() {
         }
       >
         <Route index element={<Datasets />} />
+        <Route path="dashboards/ops" element={<OpsDashboard />} />
+        <Route path="dashboards/sales" element={<SalesDashboard />} />
         <Route path="datasets/:name" element={<DatasetQuery />} />
         <Route path="my-keys" element={<MyKeys />} />
         <Route path="my-reports" element={<MyReports />} />
@@ -46,6 +54,10 @@ export default function App() {
         <Route path="admin/sync" element={<RequireAuth admin><AdminSync /></RequireAuth>} />
         <Route path="admin/audit" element={<RequireAuth admin><AdminAudit /></RequireAuth>} />
         <Route path="admin/providers" element={<RequireAuth admin><AdminProviders /></RequireAuth>} />
+        <Route path="admin/grant-requests" element={<RequireAuth admin><AdminGrantRequests /></RequireAuth>} />
+        <Route path="admin/quality" element={<RequireAuth admin><AdminQuality /></RequireAuth>} />
+        <Route path="admin/metric-lineage" element={<RequireAuth admin><AdminMetricLineage /></RequireAuth>} />
+        <Route path="admin/tenants" element={<RequireAuth admin><AdminTenants /></RequireAuth>} />
       </Route>
     </Routes>
   )

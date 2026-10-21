@@ -16,9 +16,13 @@ from app.assistant.sql_rewrite import rewrite_sql
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
-def load_schema(session_factory, pg_engine, user) -> dict:
-    """返回 `{tables: [...], prompt: str}`，只含该用户可见的数据集。"""
-    return build_schema_context(session_factory, pg_engine, user)
+def load_schema(session_factory, pg_engine, user, tenant_id: int | None = None) -> dict:
+    """返回 `{tables: [...], prompt: str}`，只含该用户可见的数据集。
+
+    `tenant_id` 由调用方（请求的租户上下文）传入；问数与 Agent 都只看到
+    自己租户内的数据集结构。
+    """
+    return build_schema_context(session_factory, pg_engine, user, tenant_id)
 
 
 def load_few_shots(session_factory, question: str, user, limit: int = 5) -> list[dict]:

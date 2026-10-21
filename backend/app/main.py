@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app.api.health import router as health_router
 
@@ -36,6 +37,18 @@ async def lifespan(app: FastAPI):
 
     refresh_jobs(scheduler, session_factory)
     refresh_report_jobs(scheduler, session_factory)
+
+    # 数据质量巡检：定时跑规则，异常落库 + 记审计（与同步/报表/监控同一套调度器）
+    from app.quality_scheduler import refresh_quality_jobs
+
+    refresh_quality_jobs(scheduler, session_factory)
+
+    # 授权到期自动过期：每小时把已过 expires_at 的授权置 expired。
+    # 安全边界其实在读时的 active_grants_query，这个任务只是把事实写进状态，
+    # 让管理界面显示"已过期"、审计能追溯"什么时候过期的"。
+    from app.grants_expiry import register_job as register_expiry_job
+
+    register_expiry_job(scheduler, session_factory)
 
     # 主动监控：定时跑指标，命中异常才启动 Agent 归因并生成简报
     if settings.monitor_enabled:
@@ -183,6 +196,24 @@ def create_app() -> FastAPI:
     from app.api.lineage_api import router as lineage_router
 
     app.include_router(lineage_router, prefix="/api/v1")
+
+    # 治理补全：租户 / 权限申请与审批 / 数据质量巡检 / 指标血缘
+    from app.api.grant_api import router as grant_router
+    from app.api.metric_api import router as metric_router
+    from app.api.quality_api import router as quality_router
+    from app.api.tenant_api import router as tenant_router
+    from app.api.dashboard_api import router as dashboard_router
+
+    # 看板查询抛的 PermissionError 统一转 403（否则 FastAPI 报 500）
+    @app.exception_handler(PermissionError)
+    async def _permission_denied(_request, exc: PermissionError):
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    app.include_router(tenant_router, prefix="/api/v1")
+    app.include_router(grant_router, prefix="/api/v1")
+    app.include_router(quality_router, prefix="/api/v1")
+    app.include_router(metric_router, prefix="/api/v1")
+    app.include_router(dashboard_router, prefix="/api/v1")
 
     # 前端静态托管（存在时启用；SPA fallback 返回 index.html）
     from pathlib import Path

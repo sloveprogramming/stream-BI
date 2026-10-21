@@ -1,18 +1,23 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pathlib import Path
 
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
-from app.models import Dataset, DatasetGrant, ReportRun, ReportTask
+from app.grants import active_grants_query
+from app.models import AuditLog, Dataset, DatasetGrant, ReportRun, ReportTask
+from app.reports.service import exports_dir
 
 router = APIRouter(tags=["reports"])
-
-EXPORTS_DIR = Path("exports")
 
 
 def _require_admin_web(principal: AnyPrincipal) -> None:
     if not principal.user.is_admin:
         raise HTTPException(status_code=403, detail="admin only")
+
+
+def _tenant_id(principal: AnyPrincipal) -> int | None:
+    return getattr(principal.tenant, "tenant_id", None)
 
 
 @router.post("/my/report-tasks", status_code=201)
@@ -26,9 +31,16 @@ def create_report_task(
         ds = session.get(Dataset, body.get("dataset_id"))
         if ds is None:
             raise HTTPException(status_code=404, detail="dataset not found")
-        if principal.user.role_id is None or not session.query(DatasetGrant).filter_by(
-            role_id=principal.user.role_id, dataset_id=ds.id
-        ).first():
+        tenant_id = _tenant_id(principal)
+        if tenant_id is not None and ds.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="dataset not found")
+        # 只看生效中的授权：过期的角色授权不该还能建报表
+        has_grant = active_grants_query(
+            session.query(DatasetGrant).filter_by(
+                role_id=principal.user.role_id, dataset_id=ds.id
+            )
+        ).first() if principal.user.role_id else None
+        if not has_grant:
             raise HTTPException(status_code=403, detail="no grant")
         if session.query(ReportTask).filter_by(name=body["name"]).first():
             raise HTTPException(status_code=409, detail="report task exists")
@@ -39,6 +51,8 @@ def create_report_task(
             cron=body.get("cron", "0 8 * * *"),
             filters=body.get("filters") or {},
             owner_user_id=principal.user.id,
+            # 归属当前租户：漏填会让报表在按租户查询时消失
+            tenant_id=tenant_id if tenant_id is not None else ds.tenant_id,
         )
         session.add(task)
         session.commit()
@@ -140,7 +154,28 @@ def download_report(
         task = session.get(ReportTask, run.task_id)
         if task is None or task.owner_user_id != principal.user.id:
             raise HTTPException(status_code=403, detail="not your report")
-        path = EXPORTS_DIR / run.file_name
+        path = exports_dir(ctx.settings) / run.file_name
         if not path.exists():
             raise HTTPException(status_code=404, detail="file expired")
+        # 导出下载必须记审计（合规审计最常查的三类事件之一）。
+        # 记了但没记成不致命 —— 下载本身要继续。
+        try:
+            session.add(
+                AuditLog(
+                    user_id=principal.user.id,
+                    channel="export",
+                    dataset=None,
+                    action="export.download",
+                    row_count=run.row_count,
+                    detail={
+                        "run_id": run.id,
+                        "task_id": task.id,
+                        "task_name": task.name,
+                        "file_name": run.file_name,
+                    },
+                )
+            )
+            session.commit()
+        except Exception:  # noqa: BLE001
+            pass
         return FileResponse(path, filename=run.file_name)

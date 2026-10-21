@@ -473,7 +473,7 @@ function DesignerInner() {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
-                      color: v ? '#cf1322' : '#8c8c8c',
+                      color: v ? 'var(--semantic-error)' : 'var(--neutral-text-tertiary)',
                     }}
                   >
                     {v || '—'}
@@ -511,7 +511,9 @@ function DesignerInner() {
               locale={{ emptyText: '这一步没有数据（可能是上游过滤太严，或确实为空）' }}
             />
             <details style={{ marginTop: 12 }}>
-              <summary style={{ cursor: 'pointer', color: '#8c8c8c' }}>查看这一步的 SQL</summary>
+              <summary style={{ cursor: 'pointer', color: 'var(--neutral-text-tertiary)' }}>
+                查看这一步的 SQL
+              </summary>
               <Input.TextArea readOnly value={preview.sql} autoSize={{ minRows: 6, maxRows: 16 }} />
             </details>
           </>

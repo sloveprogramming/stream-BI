@@ -205,7 +205,7 @@ export default function ModelProviders() {
             dataIndex: 'api_key_masked',
             width: 140,
             ellipsis: true,
-            render: (v) => v || <span style={{ color: '#999' }}>（无）</span>,
+            render: (v) => v || <span style={{ color: 'var(--neutral-text-tertiary)' }}>（无）</span>,
           },
           {
             title: '默认',

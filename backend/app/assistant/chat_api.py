@@ -45,21 +45,28 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
     sql = ""
     row_count = 0
     error: str | None = None
+    # 置信度信号：单轮问数没有重试循环，所以口径与样例命中就是主要依据
+    signals = {"metric": False, "fewshot": False, "rows": 0}
     try:
+        tenant_id = getattr(getattr(principal, "tenant", None), "tenant_id", None)
         schema = build_schema_context(
-            ctx.session_factory, ctx.pg_engine, principal.user
+            ctx.session_factory, ctx.pg_engine, principal.user, tenant_id
         )
         if not schema["tables"]:
             error = "当前账号没有可用数据集"
             yield from _sse([{"type": "error", "message": error}])
             return
+        examples = load_few_shots(ctx.session_factory, question, principal.user)
+        signals["fewshot"] = bool(examples)
+        # 口径是否命中字典（确定性判定，不交给模型自评）
+        signals["metric"] = _metric_hit(ctx, question)
         sql = generate_sql(
             system_prompt(),
             user_prompt(
                 schema["prompt"],
                 question,
                 history,
-                load_few_shots(ctx.session_factory, question, principal.user),
+                examples,
                 schema.get("metrics", ""),
             ),
         )
@@ -71,6 +78,7 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
             ctx.pg_engine, sql, schema["tables"], ctx.settings.assistant_max_rows
         )
         row_count = len(rows)
+        signals["rows"] = row_count
         yield from _sse(
             [
                 {
@@ -91,7 +99,37 @@ def _run(question: str, history: list, session_id: str | None, principal: AnyPri
         error = f"查询失败：{exc}"[:300]
         yield from _sse([{"type": "error", "message": error}])
     finally:
+        # 置信度随回答一起给：用户要知道这个数有多可信
+        yield from _sse([{"type": "confidence", **_confidence(signals, error)}])
         _audit(ctx, principal, session_id, question, sql, row_count, started, error)
+
+
+def _metric_hit(ctx, question: str) -> bool:
+    """问题里有没有词能命中指标字典。字典不可用时返回 False（不给虚假高置信度）。"""
+    try:
+        from app.metrics import load_for
+
+        with ctx.session_factory() as session:
+            return bool(load_for(session).search(question))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _confidence(signals: dict, error: str | None) -> dict:
+    """单轮问数的置信度：没有重试循环，所以只有证据/口径/样例三个信号。"""
+    from app.assistant.confidence import ConfidenceSignals, assess
+
+    if error:
+        return {"level": "low", "reasons": [f"查询未成功：{error[:120]}"]}
+    return assess(
+        ConfidenceSignals(
+            evidence_rows=int(signals.get("rows") or 0),
+            failed_steps=0,
+            sql_attempts=1,
+            metric_hit=bool(signals.get("metric")),
+            fewshot_hit=bool(signals.get("fewshot")),
+        )
+    ).to_dict()
 
 
 def _audit(ctx, principal, session_id, question, sql, row_count, started, error):

@@ -3,8 +3,10 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 
-from app.access.scoped_query import check_ident
+from app.access.grants import query_visible_datasets, resolve_grant
+from app.access.scoped_query import build_count_sql, build_scoped_sql, check_ident
 from app.api.deps import AnyPrincipal, Context, get_any_principal, get_ctx
+from app.grants import active_grants_query
 from app.models import (
     ApiKey,
     AuditLog,
@@ -28,6 +30,15 @@ def _require_admin(principal: AnyPrincipal) -> None:
         raise HTTPException(status_code=403, detail="admin only")
 
 
+def _tenant_id(principal: AnyPrincipal) -> int | None:
+    """当前请求的租户。None 表示超管要全量（不带租户过滤）。
+
+    新建记录时把它写进 tenant_id —— 漏填的记录在按租户查询时会"消失"，
+    这是多租户最常见的静默 bug。
+    """
+    return getattr(principal.tenant, "tenant_id", None)
+
+
 @router.post("/users", status_code=201)
 def create_user(
     body: dict,
@@ -48,6 +59,8 @@ def create_user(
             display_name=body.get("display_name"),
             role_id=body.get("role_id"),
             is_admin=bool(body.get("is_admin", False)),
+            # 归属当前租户：漏填会让这个用户在按租户查询时消失
+            tenant_id=_tenant_id(principal),
         )
         session.add(user)
         session.commit()
@@ -230,6 +243,7 @@ def create_dataset(
             pk_columns=body["pk_columns"],
             columns=body["columns"],
             description=body.get("description"),
+            tenant_id=_tenant_id(principal),
         )
         session.add(ds)
         session.commit()
@@ -279,8 +293,12 @@ def create_grant(
 ):
     _require_admin(principal)
     with ctx.session_factory() as session:
+        tenant_id = _tenant_id(principal)
         ds = session.get(Dataset, body.get("dataset_id"))
         if ds is None:
+            raise HTTPException(status_code=400, detail="dataset not found")
+        # 跨租户授权一律拒绝：授权记录本身不该跨租户存在
+        if tenant_id is not None and ds.tenant_id != tenant_id:
             raise HTTPException(status_code=400, detail="dataset not found")
         role = session.get(Role, body.get("role_id")) if body.get("role_id") else None
         target_user = (
@@ -294,6 +312,10 @@ def create_grant(
             raise HTTPException(
                 status_code=400, detail="role_id 与 user_id 必须提供一个"
             )
+        # 被授权对象也必须同租户（跨租户授权 = 数据泄露）
+        if tenant_id is not None and target_user is not None:
+            if target_user.tenant_id != tenant_id:
+                raise HTTPException(status_code=400, detail="user not found")
         whitelist = body.get("field_whitelist")
         if whitelist is not None:
             bad = set(whitelist) - set(ds.columns)
@@ -305,7 +327,24 @@ def create_grant(
                 raise HTTPException(status_code=400, detail=f"规则字段不存在: {rule.get('field')}")
             if rule.get("op") not in _VALID_OPS:
                 raise HTTPException(status_code=400, detail=f"非法操作符: {rule.get('op')}")
-        dup_q = session.query(DatasetGrant).filter_by(dataset_id=ds.id)
+
+        # 有效期（天）。空 = 永久。到期由 app/grants.expiry 定时置 expired。
+        days = body.get("days")
+        expires_at = None
+        if days is not None:
+            try:
+                days = int(days)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="days 必须是整数")
+            if days <= 0:
+                raise HTTPException(status_code=400, detail="days 必须大于 0")
+            from app.grants import expires_at_from_days
+
+            expires_at = expires_at_from_days(days)
+
+        dup_q = active_grants_query(session.query(DatasetGrant)).filter_by(
+            dataset_id=ds.id
+        )
         dup_q = (
             dup_q.filter_by(role_id=role.id)
             if role is not None
@@ -319,12 +358,41 @@ def create_grant(
             dataset_id=ds.id,
             row_rules=rules,
             field_whitelist=whitelist,
+            status="active",
+            expires_at=expires_at,
+            tenant_id=tenant_id if tenant_id is not None else ds.tenant_id,
         )
         session.add(grant)
         session.commit()
+        # 授权变更记审计（detail 存规则快照：事后能还原"当时开的是什么权限"）
+        try:
+            session.add(
+                AuditLog(
+                    user_id=principal.user.id,
+                    channel="web",
+                    dataset=None,
+                    action="grant.create",
+                    row_count=0,
+                    detail={
+                        "grant_id": grant.id,
+                        "target_user_id": grant.user_id,
+                        "target_role_id": grant.role_id,
+                        "dataset_id": grant.dataset_id,
+                        "row_rules": grant.row_rules,
+                        "field_whitelist": grant.field_whitelist,
+                        "expires_at": (
+                            grant.expires_at.isoformat() if grant.expires_at else None
+                        ),
+                    },
+                )
+            )
+            session.commit()
+        except Exception:  # noqa: BLE001 —— 审计失败不影响授权本身
+            pass
         return {
             "id": grant.id,
             "target": ("role:" + role.name) if role else ("user:" + target_user.username),
+            "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
         }
 
 
@@ -399,8 +467,19 @@ def list_grants(
     principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
+    """列出一个数据集的全部授权，**含已过期/已撤销的**。
+
+    刻意不按 active 过滤：管理界面要让管理员看到"这个人曾经有过权限"
+    （审计需要），由前端把非 active 的标灰。
+    """
     _require_admin(principal)
+    tenant_id = _tenant_id(principal)
     with ctx.session_factory() as session:
+        ds = session.get(Dataset, dataset_id)
+        if ds is None:
+            raise HTTPException(status_code=404, detail="dataset not found")
+        if tenant_id is not None and ds.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="dataset not found")
         rows = (
             session.query(DatasetGrant)
             .filter_by(dataset_id=dataset_id)
@@ -417,6 +496,11 @@ def list_grants(
                     "target": ("role:" + role.name) if role else ("user:" + user.username),
                     "row_rules": g.row_rules,
                     "field_whitelist": g.field_whitelist,
+                    # 生效性：前端据此标灰；过期/撤销的授权不参与取数
+                    "status": g.status,
+                    "expires_at": (
+                        g.expires_at.isoformat() if g.expires_at else None
+                    ),
                 }
             )
         return result
@@ -428,11 +512,40 @@ def delete_grant(
     principal: AnyPrincipal = Depends(get_any_principal),
     ctx: Context = Depends(get_ctx),
 ):
+    """撤销授权。**不删记录**，只把 status 改成 revoked ——
+    审计要能查到"这个人曾经有过什么权限"，删了就只剩一条空记录。
+    """
     _require_admin(principal)
+    tenant_id = _tenant_id(principal)
     with ctx.session_factory() as session:
         g = session.get(DatasetGrant, grant_id)
         if g is None:
             raise HTTPException(status_code=404, detail="grant not found")
-        session.delete(g)
+        if tenant_id is not None and g.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="grant not found")
+        from app.grants import GRANT_REVOKED
+
+        g.status = GRANT_REVOKED
         session.commit()
-        return {"deleted": grant_id}
+        # 授权变更必须记审计（合规审计最常查的一类）
+        try:
+            session.add(
+                AuditLog(
+                    user_id=principal.user.id,
+                    channel="web",
+                    dataset=None,
+                    action="grant.revoke",
+                    row_count=0,
+                    detail={
+                        "grant_id": g.id,
+                        "target_user_id": g.user_id,
+                        "dataset_id": g.dataset_id,
+                        "row_rules": g.row_rules,
+                        "field_whitelist": g.field_whitelist,
+                    },
+                )
+            )
+            session.commit()
+        except Exception:  # noqa: BLE001 —— 审计失败不影响撤销本身
+            pass
+        return {"deleted": grant_id, "status": g.status}

@@ -36,6 +36,10 @@ class MonitorTask(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 归属租户；调度时只装载本租户的任务
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id"), nullable=True, index=True
+    )
     # 用谁的身份取数：决定行级/字段级权限范围，与四个出口完全一致
     owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     # 只读 SQL，必须返回单个数值（当前值）
